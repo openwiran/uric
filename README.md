@@ -251,3 +251,7 @@ unchanged.
   Use `send_control_request()` with your own payload.
 * The SCTP transport uses one-to-one sockets with a single association per E2 node, and no multi-homing.
 * REAL values are encoded in base 2, because pycrate's base-10 encoder is unreliable. Decoding accepts both bases.
+
+## License
+
+uric is released under the [Apache License, Version 2.0](LICENSE). See the `LICENSE` file for the full text.
