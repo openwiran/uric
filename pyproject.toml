@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uric"
+version = "0.1.0"
+description = "A pure python O-RAN near-RT RIC (E2AP, E2SM-KPM v3, E2SM-RC v1.03) with dashboard and xApp SDK"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = ["pycrate>=0.7"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking",
+]
+
+[project.scripts]
+uric = "uric.app:main"
+uric-sim = "uric.sim.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["uric*"]
+
+[tool.setuptools.package-data]
+uric = ["dashboard/*", "asn1/*"]

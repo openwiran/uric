@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uric near-RT RIC</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="favicon.svg" alt="" width="26" height="26">
+    <div>
+      <div class="brand-name">uric</div>
+      <div class="brand-sub">O-RAN near-RT RIC</div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <a href="#/overview" data-view="overview">Overview</a>
+    <a href="#/nodes" data-view="nodes">E2 Nodes <span class="count" id="c-nodes">0</span></a>
+    <a href="#/ues" data-view="ues">UEs <span class="count" id="c-ues">0</span></a>
+    <a href="#/subscriptions" data-view="subscriptions">Subscriptions <span class="count" id="c-subs">0</span></a>
+    <a href="#/xapps" data-view="xapps">xApps <span class="count" id="c-xapps">0</span></a>
+    <a href="#/events" data-view="events">Events</a>
+  </nav>
+  <div class="status">
+    <span id="ric-meta" class="meta"></span>
+    <span id="live" class="pill pill-off" title="Live event stream">offline</span>
+  </div>
+</header>
+<main id="view" class="view"></main>
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
