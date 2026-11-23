@@ -35,8 +35,8 @@ class PRBQuotas(xAppBase):
     version = "1.0.0"
     description = "Cycles the max PRB quota of every UE through 30/50/70/100% every 5 s (KPM/RC UE discovery)"
 
-    def __init__(self, config, http_server_port, rmr_port, ric_address=None):
-        super().__init__(config, http_server_port, rmr_port, ric_address=ric_address)
+    def __init__(self, config, ric_address=None):
+        super().__init__(config, ric_address)
         self.period_s = float(self.config.get("period_s", 5.0))
         self.max_prb_ratios = [int(v) for v in self.config.get("max_prb_ratios", [30, 50, 70, 100])]
         self.min_prb_ratio = int(self.config.get("min_prb_ratio", 10))
@@ -203,13 +203,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="uric PRB quotas xApp")
     parser.add_argument("--config", type=str, default="", help="xApp config file path (JSON)")
-    parser.add_argument("--http_server_port", type=int, default=8093, help="HTTP server listen port (ignored)")
-    parser.add_argument("--rmr_port", type=int, default=4563, help="RMR port (ignored)")
     parser.add_argument("--ric", type=str, default=None, help="RIC xApp interface host:port (default 127.0.0.1:4560)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
-    myXapp = PRBQuotas(args.config, args.http_server_port, args.rmr_port, ric_address=args.ric)
+    myXapp = PRBQuotas(args.config, ric_address=args.ric)
 
     signal.signal(signal.SIGQUIT, myXapp.signal_handler)
     signal.signal(signal.SIGTERM, myXapp.signal_handler)

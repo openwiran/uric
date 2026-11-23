@@ -6,8 +6,8 @@ This mirrors the python xApp framework of the srsRAN ``oran-sc-ric`` project
     from uric.xapp import xAppBase
 
     class MyXapp(xAppBase):
-        def __init__(self, config, http_server_port, rmr_port):
-            super().__init__(config, http_server_port, rmr_port)
+        def __init__(self, config, ric_address=None):
+            super().__init__(config, ric_address)
 
         def my_subscription_callback(self, e2_agent_id, subscription_id, indication_hdr, indication_msg):
             hdr = self.e2sm_kpm.extract_hdr_info(indication_hdr)
@@ -20,7 +20,7 @@ This mirrors the python xApp framework of the srsRAN ``oran-sc-ric`` project
                                                            self.my_subscription_callback)
 
     if __name__ == "__main__":
-        xapp = MyXapp("", 8090, 4560)
+        xapp = MyXapp("")
         signal.signal(signal.SIGINT, xapp.signal_handler)
         xapp.start("gnb_00101_e00", ["DRB.UEThpDl"])
 
@@ -28,8 +28,9 @@ Differences with the OSC framework:
 
 * there is no RMR / subscription manager: a standalone xApp connects to the
   RIC's xApp interface (``ric_address`` argument, ``URIC_RIC`` environment
-  variable, default ``127.0.0.1:4560``); ``http_server_port`` and ``rmr_port``
-  are accepted for source compatibility and ignored;
+  variable, default ``127.0.0.1:4560``), so the constructor takes no
+  ``http_server_port`` / ``rmr_port`` / ``rmr_flags`` arguments:
+  ``xAppBase(config=None, ric_address=None)``;
 * the same class can be installed as a package (``uric.xapps`` entry point)
   and run *inside* the RIC; ``start()`` is then called with the
   ``start_args`` of the xApp configuration;
@@ -96,11 +97,10 @@ class xAppBase:
     #: optional explicit name (defaults to the class name)
     name: Optional[str] = None
 
-    def __init__(self, config: Any = None, http_server_port: int = 8090, rmr_port: int = 4560,
-                 rmr_flags: int = 0x00, *, name: Optional[str] = None, ric_address: Optional[str] = None):
+    def __init__(self, config: Any = None, ric_address: Optional[str] = None, *, name: Optional[str] = None):
+        """``config``: dict or path to a JSON file; ``ric_address``: ``host:port`` of
+        the RIC xApp interface (standalone mode only)."""
         self.config = self._load_config(config)
-        self.MY_HTTP_SERVER_PORT = http_server_port
-        self.MY_RMR_PORT = rmr_port
         self.xapp_name = name or self.config.get("name") or type(self).name or type(self).__name__
         self.log = logging.getLogger(f"xapp.{self.xapp_name}")
         self.running = False

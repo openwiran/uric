@@ -15,8 +15,8 @@ from uric.xapp.manager import XAppManager
 class KpmProbe(xAppBase):
     """Collects style 1 and style 4 reports, decoded with the OSC helpers."""
 
-    def __init__(self, config, http_server_port, rmr_port, **kw):
-        super().__init__(config, http_server_port, rmr_port, **kw)
+    def __init__(self, config, ric_address=None):
+        super().__init__(config, ric_address)
         self.node_meas, self.ue_meas, self.hdrs = [], [], []
 
     def cb1(self, e2_agent_id, subscription_id, indication_hdr, indication_msg):
@@ -39,8 +39,8 @@ class SliceCtl(xAppBase):
     """Periodically sets the slice PRB quota of every E2 node (RC style 2 / action 6)."""
     name = "slice-ctl"
 
-    def __init__(self, config, http_server_port, rmr_port):
-        super().__init__(config, http_server_port, rmr_port)
+    def __init__(self, config):
+        super().__init__(config)
 
     @xAppBase.start_function
     def start(self):
@@ -120,7 +120,7 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
     async def test_standalone(self):
         loop = asyncio.get_running_loop()
         addr = f"127.0.0.1:{self.nb.port}"
-        x = await loop.run_in_executor(None, lambda: KpmProbe("", 8090, 4560, ric_address=addr))
+        x = await loop.run_in_executor(None, lambda: KpmProbe("", ric_address=addr))
         self.assertIn(x.xapp_name, self.mgr.xapps)
         self.assertEqual(self.mgr.xapps[x.xapp_name].source, "remote")
         exited = threading.Event()

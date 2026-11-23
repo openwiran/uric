@@ -193,7 +193,7 @@ class XAppManager:
         start_args = config.get("start_args") or {}
 
         def construct():
-            names = {"config": config, "http_server_port": 8090, "rmr_port": 4560}
+            names = {"config": config}
             args = []
             for p in list(inspect.signature(cls.__init__).parameters.values())[1:]:
                 if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty:

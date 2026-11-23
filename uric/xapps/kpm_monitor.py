@@ -25,8 +25,8 @@ class KPMMonitor(xAppBase):
     version = "3.0.0"
     description = "Collects node and UE level KPM metrics and discovers UEs on every E2 node"
 
-    def __init__(self, config, http_server_port, rmr_port, ric_address=None):
-        super().__init__(config, http_server_port, rmr_port, ric_address=ric_address)
+    def __init__(self, config, ric_address=None):
+        super().__init__(config, ric_address)
         self.report_period = int(self.config.get("period_ms", 1000))
         self.granul_period = int(self.config.get("granul_period_ms", self.report_period))
         self.node_metrics = self.config.get("node_metrics")      # None = all metrics of style 1
@@ -150,14 +150,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="uric KPM monitor xApp")
     parser.add_argument("--config", type=str, default="", help="xApp config file path (JSON)")
-    parser.add_argument("--http_server_port", type=int, default=8091, help="HTTP server listen port (ignored)")
-    parser.add_argument("--rmr_port", type=int, default=4561, help="RMR port (ignored)")
     parser.add_argument("--ric", type=str, default=None, help="RIC xApp interface host:port (default 127.0.0.1:4560)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
     # Create the xApp.
-    myXapp = KPMMonitor(args.config, args.http_server_port, args.rmr_port, ric_address=args.ric)
+    myXapp = KPMMonitor(args.config, ric_address=args.ric)
 
     # Connect exit signals.
     signal.signal(signal.SIGQUIT, myXapp.signal_handler)

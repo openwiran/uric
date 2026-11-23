@@ -103,8 +103,8 @@ import signal
 from uric.xapp import xAppBase
 
 class MyXapp(xAppBase):
-    def __init__(self, config, http_server_port, rmr_port):
-        super().__init__(config, http_server_port, rmr_port)
+    def __init__(self, config, ric_address=None):
+        super().__init__(config, ric_address)
 
     def my_subscription_callback(self, e2_agent_id, subscription_id, indication_hdr, indication_msg):
         indication_hdr = self.e2sm_kpm.extract_hdr_info(indication_hdr)
@@ -124,7 +124,7 @@ class MyXapp(xAppBase):
                                                        self.my_subscription_callback)
 
 if __name__ == "__main__":
-    xapp = MyXapp("", 8090, 4560)
+    xapp = MyXapp("")              # config: dict or JSON file path
     signal.signal(signal.SIGINT, xapp.signal_handler)     # stop() deletes every subscription
     xapp.start("gnb_00101_e00", ["RSRP", "DRB.UEThpDl"])
 ```
@@ -186,6 +186,9 @@ tuple, or an integer. An integer is looked up in the RIC UE registry.
 
 How uric differs from the OSC framework:
 
+* The constructor is `xAppBase(config=None, ric_address=None)`. There is no RMR and no xApp HTTP server, so there are
+  no `http_server_port`, `rmr_port` or `rmr_flags` arguments. When porting an OSC xApp, drop them from its `__init__`
+  and its command-line options.
 * RAN function IDs are discovered automatically.
 * Control calls wait for the acknowledgement and return `{"success", "cause", "outcome"}`.
 * `extract_meas_data` decodes every metric of indication format 2. The OSC framework handles only the first one.

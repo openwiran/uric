@@ -15,8 +15,8 @@ from uric.xapp.manager import XAppManager
 class Probe(xAppBase):
     name = "probe"
 
-    def __init__(self, config, http_server_port, rmr_port):
-        super().__init__(config, http_server_port, rmr_port)
+    def __init__(self, config):
+        super().__init__(config)
         self.reports = []
 
     def cb(self, e2_agent_id, subscription_id, indication_hdr, indication_msg):
@@ -32,8 +32,8 @@ class SliceCtl(xAppBase):
     """Periodically sets the slice PRB quota of every E2 node (RC style 2 / action 6)."""
     name = "slice-ctl"
 
-    def __init__(self, config, http_server_port, rmr_port):
-        super().__init__(config, http_server_port, rmr_port)
+    def __init__(self, config):
+        super().__init__(config)
 
     @xAppBase.start_function
     def start(self):
