@@ -3,8 +3,7 @@
 For every E2 node it subscribes to
 
 * E2SM-KPM report style 1: node level measurements,
-* E2SM-KPM report style 4: UE level measurements, one subscription per slice
-  (S-NSSAI matching condition),
+* E2SM-KPM report style 4: UE level measurements
 * E2SM-RC report style 4: UE information (serving cell), when supported.
 
 The RIC itself decodes every indication to maintain its UE registry and node
@@ -31,13 +30,16 @@ class KPMMonitor(xAppBase):
         self.granul_period = int(self.config.get("granul_period_ms", self.report_period))
         self.node_metrics = self.config.get("node_metrics")      # None = all metrics of style 1
         self.ue_metrics = self.config.get("ue_metrics")          # None = all metrics of style 4
-        self.ue_slices = self.config.get("ue_slices", [1, 2])    # SSTs used as matching conditions
         self.rc_ue_info = self.config.get("rc_ue_info", True)
         self.poll_period = float(self.config.get("poll_s", 1.0))
         self.nodes = {}       # e2_node_id -> {"subscriptions": [...], "errors": [...]}
         self.node_kpis = {}   # e2_node_id -> {metric: value}
         self.ue_kpis = {}     # ue key -> {metric: value}
         self.indications = 0
+
+    def print_subscription(self, e2_node_id, style, metric_names, extra=""):
+        self.log.info("Subscribe to E2 node ID: %s, RAN func: e2sm_kpm, Report Style: %d%s, metrics: %s",
+                      e2_node_id, style, f", {extra}" if extra else "", metric_names)
 
     # ------------------------------------------------------------------ callbacks
 
@@ -51,13 +53,13 @@ class KPMMonitor(xAppBase):
             kpis[metric_name] = value[-1] if value else None
         kpis["colletStartTime"] = str(indication_hdr["colletStartTime"])
 
-    def ue_subscription_callback(self, e2_agent_id, subscription_id, indication_hdr, indication_msg, sst):
+    def ue_subscription_callback(self, e2_agent_id, subscription_id, indication_hdr, indication_msg):
         """KPM report style 4 (indication message format 3)."""
         self.indications += 1
         meas_data = self.e2sm_kpm.extract_meas_data(indication_msg)
         for ue_id, ue_meas_data in meas_data.get("ueMeasData", {}).items():
             kpis = self.ue_kpis.setdefault(ue_id, {})
-            kpis["e2_node_id"], kpis["sst"] = e2_agent_id, sst
+            kpis["e2_node_id"] = e2_agent_id
             for metric_name, value in ue_meas_data["measData"].items():
                 kpis[metric_name] = value[-1] if value else None
 
@@ -79,7 +81,7 @@ class KPMMonitor(xAppBase):
 
             if 1 in report_styles:
                 metric_names = self.node_metrics or self.e2sm_kpm.get_supported_metrics(e2_node_id, 1)
-                print_subscription(self, e2_node_id, 1, metric_names)
+                self.print_subscription(e2_node_id, 1, metric_names)
                 try:
                     sub_id = self.e2sm_kpm.subscribe_report_service_style_1(
                         e2_node_id, self.report_period, metric_names, self.granul_period,
@@ -90,20 +92,16 @@ class KPMMonitor(xAppBase):
 
             if 4 in report_styles:
                 metric_names = self.ue_metrics or self.e2sm_kpm.get_supported_metrics(e2_node_id, 4)
-                for sst in self.ue_slices or [1]:
-                    # matching UE condition: every UE of slice SST
-                    matchingUeConds = [{"testCondInfo": {"testType": ("sNSSAI", "true"), "testExpr": "equal",
-                                                         "testValue": ("valueInt", int(sst))}}]
-                    subscription_callback = lambda agent, sub, hdr, msg, sst=sst: \
-                        self.ue_subscription_callback(agent, sub, hdr, msg, sst)
-                    print_subscription(self, e2_node_id, 4, metric_names, f"SST {sst}")
-                    try:
-                        sub_id = self.e2sm_kpm.subscribe_report_service_style_4(
-                            e2_node_id, self.report_period, matchingUeConds, metric_names, self.granul_period,
-                            subscription_callback)
-                        info["subscriptions"].append({"style": f"kpm 4 sst={sst}", "id": sub_id})
-                    except RICError as e:
-                        info["errors"].append(f"kpm 4 sst={sst}: {e}")
+                matchingUeConds = [{'testCondInfo': {'testType': ('ul-rSRP', 'true'), 'testExpr': 'lessthan', 
+                                                     'testValue': ('valueInt', 1000)}}]
+                self.print_subscription(e2_node_id, 4, metric_names)
+                try:
+                    sub_id = self.e2sm_kpm.subscribe_report_service_style_4(
+                        e2_node_id, self.report_period, matchingUeConds, metric_names, self.granul_period,
+                        self.ue_subscription_callback)
+                    info["subscriptions"].append({"style": f"kpm 4", "id": sub_id})
+                except RICError as e:
+                    info["errors"].append(f"kpm 4: {e}")
 
         if "RC" in service_models and self.rc_ue_info:
             rc_report_styles = [s["type"] for s in self.e2sm_rc.get_capabilities(e2_node_id).get("report_styles", [])]
@@ -138,11 +136,6 @@ class KPMMonitor(xAppBase):
             except RICError as e:
                 self.log.warning("%s", e)
             self.sleep(self.poll_period)
-
-
-def print_subscription(xapp, e2_node_id, style, metric_names, extra=""):
-    xapp.log.info("Subscribe to E2 node ID: %s, RAN func: e2sm_kpm, Report Style: %d%s, metrics: %s",
-                  e2_node_id, style, f", {extra}" if extra else "", metric_names)
 
 
 if __name__ == "__main__":
