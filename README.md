@@ -198,11 +198,6 @@ How uric differs from the OSC framework:
 [uric/xapps/kpm_monitor.py](uric/xapps/kpm_monitor.py), the `kpm-monitor` xApp, is a complete example of the
 API. It subscribes to KPM report style 1 and to style 4 for each slice, and to RC report style 4. Its callbacks decode
 with `extract_hdr_info` / `extract_meas_data`, and its `__main__` block lets it run standalone.
-[uric/xapps/prb_quotas.py](uric/xapps/prb_quotas.py), the `prb-quotas` xApp, discovers UEs by itself, through KPM report
-style 4 for each slice and RC report style 4. It forgets a node's UEs when the node disconnects, and discovers them again
-when the node reconnects. Every 5 s it moves each UE's slice-level max PRB quota to the next value in 30, 50, 70, 100 %,
-using RC style 2 / action 6. Start it with `uric --xapp uric.xapps.prb_quotas` or `python -m uric.xapps.prb_quotas`.
-
 To build E2SM payloads of your own, use the low-level codecs in `uric.codec.e2ap`, `uric.codec.kpm`, `uric.codec.rc`
 and `uric.codec.e2sm`, and send them with `subscribe()` and `send_control_request()`.
 
