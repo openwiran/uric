@@ -193,14 +193,6 @@ How uric differs from the OSC framework:
 * Control calls wait for the acknowledgement and return `{"success", "cause", "outcome"}`.
 * `extract_meas_data` decodes every metric of indication format 2. The OSC framework handles only the first one.
 
-### Reference xApp
-
-[uric/xapps/kpm_monitor.py](uric/xapps/kpm_monitor.py), the `kpm-monitor` xApp, is a complete example of the
-API. It subscribes to KPM report style 1 and to style 4 for each slice, and to RC report style 4. Its callbacks decode
-with `extract_hdr_info` / `extract_meas_data`, and its `__main__` block lets it run standalone.
-To build E2SM payloads of your own, use the low-level codecs in `uric.codec.e2ap`, `uric.codec.kpm`, `uric.codec.rc`
-and `uric.codec.e2sm`, and send them with `subscribe()` and `send_control_request()`.
-
 ## E2AP procedures
 
 | Procedure | Direction | Support |
