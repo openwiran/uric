@@ -13,6 +13,6 @@
   "xapp_interface": {"host": "0.0.0.0", "port": 4560},
   "log_level": "INFO",
   "xapps": [
-    {"spec": "uric.xapps.kpm_monitor", "config": {"period_ms": 1000, "ue_slices": [1, 2]}, "autostart": false}
+    {"spec": "uric.xapps.kpm_monitor", "config": {"period_ms": 1000}, "autostart": false}
   ]
 }
