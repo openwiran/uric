@@ -4,7 +4,7 @@
 
   const state = {
     ric: null, nodes: [], ues: [], subs: [], xapps: [], events: [],
-    nodeDetail: {}, history: {}, live: false, ueFilter: "", ueNode: "", evFilter: "",
+    nodeDetail: {}, history: {}, nodeSamples: {}, ueSamples: {}, live: false, ueFilter: "", ueNode: "", evFilter: "",
   };
   const HIST = 60;
   const view = document.getElementById("view");
@@ -65,6 +65,59 @@
     h.push(v);
     if (h.length > HIST) h.shift();
   }
+  // One sample per KPM report seen by the dashboard (the dashboard polls every 2 s, so the same
+  // report can be fetched several times: samples are deduplicated on the report time).
+  // ``extra`` holds per-sample identification columns (e.g. the serving node of a UE).
+  function recordSample(store, key, ts, metrics, extra) {
+    if (!ts || !Object.keys(metrics || {}).length) return;
+    const samples = store[key] || (store[key] = []);
+    if (samples.length && samples[samples.length - 1].ts === ts) return;
+    samples.push({ ts, metrics: Object.assign({}, metrics), extra: extra || {} });
+    if (samples.length > HIST) samples.shift();
+  }
+
+  function csvField(v) {
+    if (v == null) return "";
+    const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  // KPI samples as CSV: a header row (timestamp, unix_time, the ``idCols``, then every metric
+  // seen), then one row per KPM report, oldest first. ``idCols`` maps a column name to its value
+  // (a constant or a function of the sample).
+  function kpisCsv(samples, idCols) {
+    const metrics = [];
+    for (const smp of samples) for (const k of Object.keys(smp.metrics)) if (!metrics.includes(k)) metrics.push(k);
+    const ids = Object.entries(idCols);
+    const rows = [["timestamp", "unix_time", ...ids.map(([name]) => name), ...metrics]];
+    for (const smp of samples) {
+      rows.push([new Date(smp.ts * 1000).toISOString(), smp.ts.toFixed(3),
+        ...ids.map(([, v]) => (typeof v === "function" ? v(smp) : v)),
+        ...metrics.map((k) => smp.metrics[k])]);
+    }
+    return rows.map((r) => r.map(csvField).join(",")).join("\r\n") + "\r\n";
+  }
+
+  function fileStamp() {
+    return new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
+  }
+
+  function exportButton(act, attr, value, samples) {
+    return `<button type="button" data-act="${act}" ${attr}="${esc(value)}" ${samples.length ? "" : "disabled"}
+      title="Download the metrics of this card as CSV (one row per KPM report, up to the last ${HIST})">Export CSV</button>`;
+  }
+
+  function downloadFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function spark(key) {
     const h = state.history[key];
     if (!h || h.length < 2) return '<svg class="spark"></svg>';
@@ -83,6 +136,8 @@
         api("ric"), api("nodes"), api("ues"), api("subscriptions"), api("xapps")]);
       Object.assign(state, { ric, nodes, ues, subs, xapps });
       for (const n of nodes) for (const [k, v] of Object.entries(n.metrics || {})) pushHist(`n:${n.id}:${k}`, v);
+      for (const n of nodes) recordSample(state.nodeSamples, n.id, n.metrics_ts, n.metrics);
+      for (const u of ues) recordSample(state.ueSamples, u.key, u.metrics_ts, u.metrics, { node_id: u.node_id });
       for (const u of ues) for (const [k, v] of Object.entries(u.metrics || {})) pushHist(`u:${u.key}:${k}`, v);
       pushHist("ric:indications", ric.stats.indications);
       updateHeader();
@@ -282,7 +337,9 @@
       <span class="muted">${n.ran_functions.length} function(s)</span></div>
       <div class="panel-body">${n.ran_functions.map(ranFunction).join("") || '<div class="empty">No RAN functions</div>'}</div></div>
     <div class="grid grid-2" style="margin-top:16px">
-      <div class="panel"><div class="panel-head"><h2>Node KPIs (KPM)</h2><span class="muted">${n.metrics_ts ? "updated " + ago(n.metrics_ts) : "no node-level reports"}</span></div>
+      <div class="panel"><div class="panel-head"><h2>Node KPIs (KPM)</h2>
+        <div class="btns" style="align-items:center"><span class="muted">${n.metrics_ts ? "updated " + ago(n.metrics_ts) : "no node-level reports"}</span>
+        ${exportButton("kpicsv", "data-node", n.id, state.nodeSamples[n.id] || [])}</div></div>
         <div class="panel-body flush">${metrics.length ? `<table><thead><tr><th>Metric</th><th class="num">Value</th><th>Trend</th></tr></thead><tbody>
           ${metrics.map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td class="num">${fmtNum(v, 2)}</td><td>${spark(`n:${n.id}:${k}`)}</td></tr>`).join("")}
           </tbody></table>` : '<div class="empty">No data</div>'}</div></div>
@@ -389,7 +446,9 @@
           ${Object.entries(u.ue_id).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}
           <dt>First seen</dt><dd>${time(u.first_seen)}</dd><dt>Last seen</dt><dd>${ago(u.last_seen)}</dd>
           ${u.attrs.previous_node ? `<dt>Previous node</dt><dd class="mono">${esc(u.attrs.previous_node)}</dd>` : ""}</dl></div></div>
-        <div class="panel"><div class="panel-head"><h2>KPM metrics</h2><span class="muted">${u.metrics_ts ? "updated " + ago(u.metrics_ts) : ""}</span></div>
+        <div class="panel"><div class="panel-head"><h2>KPM metrics</h2>
+          <div class="btns" style="align-items:center"><span class="muted">${u.metrics_ts ? "updated " + ago(u.metrics_ts) : ""}</span>
+          ${exportButton("uekpicsv", "data-ue", u.key, state.ueSamples[u.key] || [])}</div></div>
           <div class="panel-body flush">${metrics.length ? `<table><thead><tr><th>Metric</th><th class="num">Value</th><th>Trend</th></tr></thead><tbody>
           ${metrics.map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td class="num">${fmtNum(v, 2)}</td><td>${spark(`u:${u.key}:${k}`)}</td></tr>`).join("")}</tbody></table>`
           : '<div class="empty">No UE level KPM reports</div>'}</div></div>
@@ -515,6 +574,25 @@
 
   async function act(b) {
     const a = b.dataset.act;
+    if (a === "kpicsv") {
+      const node = b.dataset.node;
+      const samples = state.nodeSamples[node] || [];
+      if (!samples.length) { toast("No node KPIs to export yet", true); return; }
+      downloadFile(`${node}-kpis-${fileStamp()}.csv`, kpisCsv(samples, { node_id: node }), "text/csv;charset=utf-8");
+      toast(`Exported ${samples.length} KPM report(s) of ${node}`);
+      return;
+    }
+    if (a === "uekpicsv") {
+      const ue = b.dataset.ue;
+      const samples = state.ueSamples[ue] || [];
+      if (!samples.length) { toast("No UE KPM metrics to export yet", true); return; }
+      // UE keys contain ":" (e.g. "gNB-UEID:7"), which is not allowed in file names on every OS
+      const fname = `${ue.replace(/[^A-Za-z0-9._-]+/g, "_")}-kpis-${fileStamp()}.csv`;
+      downloadFile(fname, kpisCsv(samples, { ue_key: ue, node_id: (smp) => smp.extra.node_id }),
+        "text/csv;charset=utf-8");
+      toast(`Exported ${samples.length} KPM report(s) of UE ${ue}`);
+      return;
+    }
     if (a === "xcopy") {
       const x = state.xapps.find((y) => y.name === b.dataset.name);
       try {
