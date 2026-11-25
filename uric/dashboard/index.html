@@ -6,6 +6,13 @@
 <title>uric near-RT RIC</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<script>
+  // Apply the saved theme before the first paint (no flash of the wrong theme).
+  try {
+    var t = localStorage.getItem("uric.theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { /* storage unavailable: follow the OS ("auto") */ }
+</script>
 </head>
 <body>
 <header class="topbar">
@@ -27,6 +34,17 @@
   <div class="status">
     <span id="ric-meta" class="meta"></span>
     <span id="live" class="pill pill-off" title="Live event stream">offline</span>
+    <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Color theme">
+      <button type="button" data-theme-choice="auto" title="Auto (follow the system)" aria-label="Auto theme">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" data-theme-choice="light" title="Light" aria-label="Light theme">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3.05 3.05l1.13 1.13M11.82 11.82l1.13 1.13M3.05 12.95l1.13-1.13M11.82 4.18l1.13-1.13"/></g></svg>
+      </button>
+      <button type="button" data-theme-choice="dark" title="Dark" aria-label="Dark theme">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z" fill="currentColor"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 <main id="view" class="view"></main>

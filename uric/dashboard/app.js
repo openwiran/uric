@@ -515,8 +515,34 @@
     return [id.slice(0, i), id.slice(i + 1)];
   }
 
+  // ------------------------------------------------------------ theme (auto / light / dark)
+  const THEME_KEY = "uric.theme";
+  function savedTheme() {
+    try {
+      const t = localStorage.getItem(THEME_KEY);
+      return t === "light" || t === "dark" ? t : "auto";
+    } catch (e) { return "auto"; }
+  }
+  function applyTheme(choice) {
+    if (choice === "light" || choice === "dark") document.documentElement.setAttribute("data-theme", choice);
+    else document.documentElement.removeAttribute("data-theme");   // auto: follow prefers-color-scheme
+    document.querySelectorAll("#theme-toggle [data-theme-choice]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
+  }
+  function initTheme() {
+    applyTheme(savedTheme());
+    document.querySelectorAll("#theme-toggle [data-theme-choice]").forEach((b) => b.addEventListener("click", () => {
+      const choice = b.dataset.themeChoice;
+      try {
+        if (choice === "auto") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, choice);
+      } catch (e) { /* not persisted, still applied for this page */ }
+      applyTheme(choice);
+    }));
+  }
+
   // ------------------------------------------------------------ boot
   async function boot() {
+    initTheme();
     try { state.events = (await api("events/history?limit=300")).reverse(); } catch (e) { /* ignore */ }
     await refresh();
     connectEvents();

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --bg: #f5f7fa;
   --panel: #ffffff;
   --panel-2: #f0f3f7;
@@ -21,8 +22,33 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
+/* Dark palette: forced with the theme toggle (data-theme="dark"), or in "auto"
+   mode (no data-theme) when the operating system prefers a dark color scheme. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c222b;
+  --border: #2b333e;
+  --text: #e6edf3;
+  --muted: #8b98a8;
+  --accent: #4c8dff;
+  --accent-soft: #15233d;
+  --ok: #3fb950;
+  --ok-soft: #12291a;
+  --warn: #d29922;
+  --warn-soft: #2d2410;
+  --err: #f85149;
+  --err-soft: #3a1414;
+  --kpm: #a57bf5;
+  --kpm-soft: #241a3a;
+  --rc: #e86bb5;
+  --rc-soft: #3a1430;
+  --shadow: none;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #0e1116;
     --panel: #161b22;
     --panel-2: #1c222b;
@@ -72,6 +98,17 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 }
 .tabs a.active .count { background: var(--accent); color: #fff; }
 .status { display: flex; align-items: center; gap: 12px; }
+
+/* theme toggle (auto / light / dark) */
+.theme-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px; background: var(--panel-2); }
+.theme-toggle button {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 24px; padding: 0;
+  border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.theme-toggle button:hover { color: var(--text); background: transparent; }
+.theme-toggle button[aria-pressed="true"] { background: var(--panel); color: var(--accent); box-shadow: var(--shadow); }
+.theme-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-toggle svg { width: 15px; height: 15px; }
 .meta { color: var(--muted); font-size: 12px; }
 
 .view { padding: 20px; max-width: 1500px; margin: 0 auto; }

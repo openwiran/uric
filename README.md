@@ -79,7 +79,7 @@ Only the xApps given with `--xapp`, or listed in the configuration file, are loa
 
 ## Dashboard
 
-The dashboard is plain HTML, CSS and JS under `uric/dashboard/`. It loads nothing from the internet, so it works offline. It polls the REST API and listens to the SSE event stream. It shows:
+The dashboard is plain HTML, CSS and JS under `uric/dashboard/`. It loads nothing from the internet, so it works offline. It polls the REST API and listens to the SSE event stream. A toggle in the top bar switches between the auto (follow the operating system), light and dark themes; the choice is remembered in the browser. It shows:
 
 * **Overview:** counters, an E2 topology graph (RIC → nodes → UEs), the node list and recent events
 * **E2 nodes:** each node's identity, peer and transport, E2AP statistics and E2 node components. For each **RAN function** it shows the decoded capabilities:
