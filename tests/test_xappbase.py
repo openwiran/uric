@@ -14,6 +14,8 @@ from uric.xapp.manager import XAppManager
 
 class KpmProbe(xAppBase):
     """Collects style 1 and style 4 reports, decoded with the OSC helpers."""
+    version = "1.2.3"
+    description = "KPM probe used by the tests"
 
     def __init__(self, config, ric_address=None):
         super().__init__(config, ric_address)
@@ -70,7 +72,7 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
         port = self.ric.listeners[0]["port"]
         self.tasks = [asyncio.create_task(n.run("127.0.0.1", port, "tcp", reconnect=False)) for n in self.nodes]
         self.assertTrue(await wait_for(lambda: len(self.ric.connected_nodes()) == 2))
-        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor", config={"period_ms": 100}).name)
+        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor_xapp", config={"period_ms": 100}).name)
         self.assertTrue(await wait_for(lambda: len(self.ric.ues) == 6))
 
     async def asyncTearDown(self):
@@ -86,6 +88,8 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
         rec = self.mgr.load(f"{__name__}:KpmProbe", config={"start_args": {"e2_node_id": "gnb_00101_b00"}})
         rec = await self.mgr.start(rec.name)
         self.assertEqual(rec.state, "running")
+        d = rec.to_dict()
+        self.assertEqual((d["version"], d["description"]), ("1.2.3", "KPM probe used by the tests"))
         x = rec.instance
         self.assertTrue(await wait_for(lambda: x.node_meas and x.ue_meas))
         node, meas = x.node_meas[-1]
@@ -123,6 +127,8 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
         x = await loop.run_in_executor(None, lambda: KpmProbe("", ric_address=addr))
         self.assertIn(x.xapp_name, self.mgr.xapps)
         self.assertEqual(self.mgr.xapps[x.xapp_name].source, "remote")
+        d = self.mgr.xapps[x.xapp_name].to_dict()   # sent by the remote xApp in its hello
+        self.assertEqual((d["version"], d["description"]), ("1.2.3", "KPM probe used by the tests"))
         exited = threading.Event()
 
         def run():
@@ -147,6 +153,37 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
         await loop.run_in_executor(None, stop)
         self.assertTrue(await wait_for(lambda: x.xapp_name not in self.mgr.xapps))
         self.assertEqual(self.ric.subscriptions_of(owner=x.xapp_name), [])
+
+
+class TestXAppMetadata(unittest.TestCase):
+    """Version / description shown in the dashboard xApps tab."""
+
+    def test_undefined_is_none(self):
+        from uric.xapp.manager import XAppRecord
+        d = XAppRecord(name="slice-ctl", spec="x", source="spec", cls=SliceCtl).to_dict()
+        self.assertEqual((d["version"], d["description"]), (None, None))
+
+    def test_entry_point_package_metadata(self):
+        """Not imported entry point xApps show the version and summary of their package."""
+        from unittest import mock
+        from uric.xapp import manager as M
+
+        class Dist:
+            version = "0.9.1"
+            metadata = {"Summary": "An installed xApp"}
+
+        class EP:
+            name, value, dist = "pkg-xapp", "pkg.mod:PkgXApp", Dist()
+
+        class EPs:
+            def select(self, group):
+                return [EP()] if group == M.ENTRY_POINT_GROUP else []
+
+        with mock.patch.object(M.metadata, "entry_points", return_value=EPs()):
+            mgr = M.XAppManager(ric=None)
+        d = mgr.xapps["pkg-xapp"].to_dict()
+        self.assertEqual(d["state"], "available")
+        self.assertEqual((d["version"], d["description"]), ("0.9.1", "An installed xApp"))
 
 
 if __name__ == "__main__":

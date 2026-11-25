@@ -96,6 +96,9 @@ class xAppBase:
 
     #: optional explicit name (defaults to the class name)
     name: Optional[str] = None
+    #: optional version and one-line description, shown in the RIC dashboard
+    version: Optional[str] = None
+    description: Optional[str] = None
 
     def __init__(self, config: Any = None, ric_address: Optional[str] = None, *, name: Optional[str] = None):
         """``config``: dict or path to a JSON file; ``ric_address``: ``host:port`` of
@@ -110,7 +113,8 @@ class xAppBase:
         self._stopped = threading.Event()
         link = getattr(_embed, "link", None)
         self._link: Link = link if link is not None else RemoteLink(
-            ric_address or self.config.get("ric_address"), self.xapp_name)
+            ric_address or self.config.get("ric_address"), self.xapp_name,
+            version=type(self).version, description=type(self).description)
         self._link.on_indication = self._inbox.put
         self.e2sm_kpm = e2sm_kpm_module(self)
         self.e2sm_rc = e2sm_rc_module(self)

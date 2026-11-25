@@ -10,7 +10,7 @@ The RIC itself decodes every indication to maintain its UE registry and node
 KPIs (what the dashboard shows); this xApp keeps the latest decoded values in
 its status. It runs inside the RIC (started by default) or standalone::
 
-    python -m uric.xapps.kpm_monitor --ric 127.0.0.1:4560
+    python -m uric.xapps.kpm_monitor_xapp --ric 127.0.0.1:4560
 """
 
 import argparse

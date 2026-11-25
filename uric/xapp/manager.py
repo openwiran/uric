@@ -52,15 +52,25 @@ class XAppRecord:
     state: str = "available"  # available | loaded | running | stopped | failed
     error: Optional[str] = None
     started_at: Optional[float] = None
+    #: version / description known without importing the xApp class: sent by a remote xApp,
+    #: or taken from the metadata of the installed package of an entry point
+    version: Optional[str] = None
+    description: Optional[str] = None
+
+    def _meta(self, attr: str) -> Optional[str]:
+        """The xApp class attribute when defined, else the value known for the record."""
+        value = getattr(self.cls, attr, None) if self.cls is not None else None
+        if value in (None, ""):
+            value = getattr(self, attr)
+        return str(value) if value not in (None, "") else None
 
     def to_dict(self) -> dict:
-        cls = self.cls
         ses = self.session
         subs = ses.subscriptions() if ses and self.state == "running" else []
         return {"name": self.name, "spec": self.spec, "source": self.source, "state": self.state,
                 "error": self.error, "started_at": self.started_at, "config": self.config,
-                "version": getattr(cls, "version", None) if cls else None,
-                "description": getattr(cls, "description", "") if cls else "",
+                "version": self._meta("version"),
+                "description": self._meta("description"),
                 "requestor_id": ses.requestor_id if ses else None,
                 "subscriptions": [s.id for s in subs],
                 "status": ses.status if ses else {},
@@ -127,7 +137,13 @@ class XAppManager:
             group = []
         for ep in group:
             if ep.name not in self.xapps:
-                self.xapps[ep.name] = XAppRecord(name=ep.name, spec=ep.value, source="entry-point")
+                version = description = None
+                dist = getattr(ep, "dist", None)   # package metadata only: nothing is imported
+                if dist is not None:
+                    version = dist.version
+                    description = dist.metadata.get("Summary")
+                self.xapps[ep.name] = XAppRecord(name=ep.name, spec=ep.value, source="entry-point",
+                                                 version=version, description=description)
 
     # loading -----------------------------------------------------------------
 

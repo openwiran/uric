@@ -420,9 +420,12 @@
   function renderXApps() {
     return `<div class="page-head"><div><h1>xApps</h1><div class="sub">Embedded xApps (installed packages with a <code>uric.xapps</code> entry point, or given with <code>--xapp</code> / in the configuration file) and standalone xApps connected to the xApp interface</div></div></div>
       <div class="grid grid-2">${state.xapps.map((x) => `<div class="panel">
-        <div class="panel-head"><h2>${esc(x.name)} <span class="muted">${esc(x.version || "")}</span></h2>${stateBadge(x.state)}</div>
-        <div class="panel-body"><div class="muted" style="margin-bottom:8px">${esc(x.description || "")}</div>
-          <dl class="kv"><dt>Source</dt><dd>${esc(x.source)}</dd><dt>Spec</dt><dd class="mono">${esc(x.spec)}</dd>
+        <div class="panel-head"><h2>${esc(x.name)}${x.version ? ` <span class="muted">v${esc(x.version)}</span>` : ""}</h2>${stateBadge(x.state)}</div>
+        <div class="panel-body">
+          <dl class="kv">
+          ${x.version ? `<dt>Version</dt><dd>${esc(x.version)}</dd>` : ""}
+          ${x.description ? `<dt>Description</dt><dd class="prose">${esc(x.description)}</dd>` : ""}
+          <dt>Source</dt><dd>${esc(x.source)}</dd><dt>Spec</dt><dd class="mono">${esc(x.spec)}</dd>
           ${x.requestor_id != null ? `<dt>RIC requestor ID</dt><dd>${esc(x.requestor_id)}</dd>` : ""}
           ${x.started_at ? `<dt>Started</dt><dd>${time(x.started_at)}</dd>` : ""}
           <dt>Subscriptions</dt><dd>${x.subscriptions.length}</dd>

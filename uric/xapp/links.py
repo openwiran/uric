@@ -122,7 +122,8 @@ class LocalLink(Link):
 
 
 class RemoteLink(Link):
-    def __init__(self, address: Optional[str] = None, name: str = "xapp"):
+    def __init__(self, address: Optional[str] = None, name: str = "xapp", version: Optional[str] = None,
+                 description: Optional[str] = None):
         address = address or os.environ.get("URIC_RIC") or DEFAULT_RIC_ADDRESS
         host, _, port = address.rpartition(":")
         self.sock = socket.create_connection((host or "127.0.0.1", int(port)), timeout=TIMEOUT)
@@ -133,7 +134,8 @@ class RemoteLink(Link):
         self._closed = False
         self._reader = threading.Thread(target=self._read_loop, name="uric-xapp-link", daemon=True)
         self._reader.start()
-        hello = self.call("hello", name=name)
+        hello = self.call("hello", name=name, version=None if version is None else str(version),
+                          description=description or None)
         self.name = hello["name"]
         self.ric_info = hello["ric"]
 

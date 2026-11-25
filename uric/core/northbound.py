@@ -9,7 +9,8 @@ Requests (xApp -> RIC) carry an ``id`` and an ``op``; the RIC answers with
 ``{"id": .., "ok": true, "result": ..}`` or ``{"id": .., "ok": false,
 "error": ".."}``:
 
-* ``hello {name}`` – must be first; registers the xApp (visible in the dashboard)
+* ``hello {name, version?, description?}`` – must be first; registers the xApp
+  (visible in the dashboard)
 * ``nodes`` – connected E2 nodes with their RAN functions/capabilities
 * ``ues {node?}`` – UE registry, with ``ue_id_raw`` (APER encoded UEID)
 * ``subscribe {node, ran_function_id, event_trigger, actions:[{id,type,definition}]}``
@@ -108,7 +109,9 @@ class NorthboundServer:
                         name = self._unique_name(str(msg.get("name") or "xapp"))
                         ctx = XAppSession(self.ric, name)
                         rec = XAppRecord(name=name, spec=f"remote {peer[0]}:{peer[1]}" if peer else "remote",
-                                         source="remote", state="running", session=ctx, started_at=time.time())
+                                         source="remote", state="running", session=ctx, started_at=time.time(),
+                                         version=msg.get("version") or None,
+                                         description=msg.get("description") or None)
                         rec.remote_close = writer.close  # type: ignore[attr-defined]
                         self.manager.xapps[name] = rec
                         self.manager.notify(rec)

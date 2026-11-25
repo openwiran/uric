@@ -40,12 +40,12 @@ uric                      # or: python -m uric
 
 The RIC starts **no xApp on its own**. It terminates E2, decodes the node capabilities and serves the dashboard, but
 it learns about UEs and KPIs only through the subscriptions that xApps make. To see UEs and node KPIs, start the
-`kpm-monitor` xApp that ships in the uric package (`uric.xapps.kpm_monitor`). It is not registered automatically, so
+`kpm-monitor` xApp that ships in the uric package (`uric.xapps.kpm_monitor_xapp`). It is not registered automatically, so
 name it explicitly. It subscribes to KPM node- and UE-level reports and to RC UE information on every node:
 
 ```bash
-uric --xapp uric.xapps.kpm_monitor   # inside the RIC
-python -m uric.xapps.kpm_monitor --ric 127.0.0.1:4560   # or as a separate process
+uric --xapp uric.xapps.kpm_monitor_xapp   # inside the RIC
+python -m uric.xapps.kpm_monitor_xapp --ric 127.0.0.1:4560   # or as a separate process
 ```
 
 In another terminal, start three simulated gNBs with 4 UEs each:

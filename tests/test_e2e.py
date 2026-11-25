@@ -93,7 +93,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({s["type"] for s in rcc["control_styles"]}, {2, 3})
 
     async def test_kpm_monitor_discovers_ues(self):
-        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor", config={"period_ms": 100}).name)
+        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor_xapp", config={"period_ms": 100}).name)
         self.assertTrue(await wait_for(lambda: len(self.ric.ues) == 6))
         self.assertTrue(await wait_for(lambda: all("RSRP" in u.metrics for u in self.ric.ues.values())))
         self.assertTrue(all(u.cell is not None for u in self.ric.ues.values()))
@@ -106,7 +106,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
         probe = rec.instance
         self.assertTrue(await wait_for(lambda: len({n for n, _ in probe.reports}) == 2))
         self.assertIn("DRB.UEThpDl", probe.reports[-1][1]["measData"])
-        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor", config={"period_ms": 100}).name)
+        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor_xapp", config={"period_ms": 100}).name)
         self.assertTrue(await wait_for(lambda: len(self.ric.ues) == 6))
         loop = asyncio.get_running_loop()
         ue = self.ric.ues_of("gnb_00101_a00")[0]
@@ -128,7 +128,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
             await loop.run_in_executor(None, lambda: probe.e2sm_rc.handover("nope", ue.key, 1))
 
     async def test_rest_api(self):
-        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor", config={"period_ms": 100}).name)
+        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor_xapp", config={"period_ms": 100}).name)
         self.assertTrue(await wait_for(lambda: len(self.ric.ues) == 6))
         p = self.api.port
         st, info = await http(p, "GET", "/api/ric")
@@ -158,7 +158,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(st, 404)
 
     async def test_reset_and_disconnect(self):
-        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor", config={"period_ms": 100}).name)
+        await self.mgr.start(self.mgr.load("uric.xapps.kpm_monitor_xapp", config={"period_ms": 100}).name)
         self.assertTrue(await wait_for(lambda: len(self.ric.ues) == 6))
         await self.ric.reset("gnb_00101_a00")
         self.assertEqual(self.ric.subscriptions_of(node_id="gnb_00101_a00"), [])
