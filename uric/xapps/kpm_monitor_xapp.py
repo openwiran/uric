@@ -1,4 +1,4 @@
-"""Built-in xApp: KPM monitor / UE discovery (srsRAN oran-sc-ric style).
+"""KPM monitor / UE discovery.
 
 For every E2 node it subscribes to
 
@@ -21,13 +21,13 @@ from uric.xapp import RICError, xAppBase
 
 class KPMMonitor(xAppBase):
     name = "kpm-monitor"
-    version = "3.0.0"
+    version = "4.0.0"
     description = "Collects node and UE level KPM metrics and discovers UEs on every E2 node"
 
-    def __init__(self, config, ric_address=None):
+    def __init__(self, config, period_ms, granul_period_ms, ric_address):
         super().__init__(config, ric_address)
-        self.report_period = int(self.config.get("period_ms", 1000))
-        self.granul_period = int(self.config.get("granul_period_ms", self.report_period))
+        self.report_period = period_ms or int(self.config.get("period_ms", 1000))
+        self.granul_period = granul_period_ms or int(self.config.get("granul_period_ms", self.report_period))
         self.node_metrics = self.config.get("node_metrics")      # None = all metrics of style 1
         self.ue_metrics = self.config.get("ue_metrics")          # None = all metrics of style 4
         self.rc_ue_info = self.config.get("rc_ue_info", True)
@@ -36,10 +36,6 @@ class KPMMonitor(xAppBase):
         self.node_kpis = {}   # e2_node_id -> {metric: value}
         self.ue_kpis = {}     # ue key -> {metric: value}
         self.indications = 0
-
-    def print_subscription(self, e2_node_id, style, metric_names, extra=""):
-        self.log.info("Subscribe to E2 node ID: %s, RAN func: e2sm_kpm, Report Style: %d%s, metrics: %s",
-                      e2_node_id, style, f", {extra}" if extra else "", metric_names)
 
     # ------------------------------------------------------------------ callbacks
 
@@ -81,7 +77,8 @@ class KPMMonitor(xAppBase):
 
             if 1 in report_styles:
                 metric_names = self.node_metrics or self.e2sm_kpm.get_supported_metrics(e2_node_id, 1)
-                self.print_subscription(e2_node_id, 1, metric_names)
+                self.log.info("Subscribe to E2 node ID: %s, RAN func: e2sm_kpm, Report Style: 1, metrics: %s",
+                              e2_node_id, metric_names)
                 try:
                     sub_id = self.e2sm_kpm.subscribe_report_service_style_1(
                         e2_node_id, self.report_period, metric_names, self.granul_period,
@@ -94,7 +91,8 @@ class KPMMonitor(xAppBase):
                 metric_names = self.ue_metrics or self.e2sm_kpm.get_supported_metrics(e2_node_id, 4)
                 matchingUeConds = [{'testCondInfo': {'testType': ('ul-rSRP', 'true'), 'testExpr': 'lessthan', 
                                                      'testValue': ('valueInt', 1000)}}]
-                self.print_subscription(e2_node_id, 4, metric_names)
+                self.log.info("Subscribe to E2 node ID: %s, RAN func: e2sm_kpm, Report Style: 4, metrics: %s",
+                                              e2_node_id, metric_names)
                 try:
                     sub_id = self.e2sm_kpm.subscribe_report_service_style_4(
                         e2_node_id, self.report_period, matchingUeConds, metric_names, self.granul_period,
@@ -144,11 +142,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="uric KPM monitor xApp")
     parser.add_argument("--config", type=str, default="", help="xApp config file path (JSON)")
     parser.add_argument("--ric", type=str, default=None, help="RIC xApp interface host:port (default 127.0.0.1:4560)")
+    parser.add_argument("--period_ms", type=int, default=None, help="Reporting period (default 1000)")
+    parser.add_argument("--granul_period_ms", type=int, default=None, help="Granular period (default 1000)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
     # Create the xApp.
-    myXapp = KPMMonitor(args.config, ric_address=args.ric)
+    myXapp = KPMMonitor(config=args.config, period_ms=args.period_ms, granul_period_ms=args.granul_period_ms, 
+                        ric_address=args.ric)
 
     # Connect exit signals.
     signal.signal(signal.SIGQUIT, myXapp.signal_handler)
