@@ -26,16 +26,17 @@ class KPMMonitor(xAppBase):
 
     def __init__(self, config, period_ms, granul_period_ms, ric_address):
         super().__init__(config, ric_address)
+        print(self.config)
         self.report_period = period_ms or int(self.config.get("period_ms", 1000))
         self.granul_period = granul_period_ms or int(self.config.get("granul_period_ms", self.report_period))
         self.node_metrics = self.config.get("node_metrics")      # None = all metrics of style 1
         self.ue_metrics = self.config.get("ue_metrics")          # None = all metrics of style 4
         self.rc_ue_info = self.config.get("rc_ue_info", True)
-        self.poll_period = float(self.config.get("poll_s", 1.0))
         self.nodes = {}       # e2_node_id -> {"subscriptions": [...], "errors": [...]}
         self.node_kpis = {}   # e2_node_id -> {metric: value}
         self.ue_kpis = {}     # ue key -> {metric: value}
         self.indications = 0
+        print(self.report_period)
 
     # ------------------------------------------------------------------ callbacks
 
@@ -116,7 +117,9 @@ class KPMMonitor(xAppBase):
     # ------------------------------------------------------------------ main loop
 
     @xAppBase.start_function
-    def start(self):
+    def start(self, poll_period_s):
+        poll_period = poll_period_s or float(self.config.get("poll_period_s", 1.0))
+        print(poll_period)
         while self.running:
             try:
                 e2_nodes = {n["id"]: n for n in self.get_e2_nodes()}
@@ -133,7 +136,7 @@ class KPMMonitor(xAppBase):
                                 node_kpis=self.node_kpis, ue_kpis=self.ue_kpis)
             except RICError as e:
                 self.log.warning("%s", e)
-            self.sleep(self.poll_period)
+            self.sleep(poll_period)
 
 
 if __name__ == "__main__":
@@ -144,6 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--ric", type=str, default=None, help="RIC xApp interface host:port (default 127.0.0.1:4560)")
     parser.add_argument("--period_ms", type=int, default=None, help="Reporting period (default 1000)")
     parser.add_argument("--granul_period_ms", type=int, default=None, help="Granular period (default 1000)")
+    parser.add_argument("--poll_period_s", type=float, default=None, help="The polling period (default 1.0)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
@@ -157,4 +161,4 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, myXapp.signal_handler)
 
     # Start the xApp (unsubscribes everything at exit).
-    myXapp.start()
+    myXapp.start(poll_period_s=args.poll_period_s)

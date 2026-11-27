@@ -18,6 +18,9 @@ from .xapp.manager import XAppManager
 
 log = logging.getLogger("uric")
 
+#: keys of an entry of the "xapps" list of the configuration file
+XAPP_ENTRY_KEYS = {"spec", "name", "config", "start_args", "autostart"}
+
 
 class RICApp:
     """Glue object: RIC core + xApp manager + API server."""
@@ -38,8 +41,12 @@ class RICApp:
         if self.northbound:
             await self.northbound.start()
         for x in self.xapp_specs:
+            unknown = set(x) - XAPP_ENTRY_KEYS
+            if unknown:
+                log.warning("xApp entry %s: unknown key(s) %s ignored (allowed: %s)", x.get("spec"),
+                            ", ".join(sorted(unknown)), ", ".join(sorted(XAPP_ENTRY_KEYS)))
             try:
-                rec = self.manager.load(x["spec"], x.get("name"), x.get("config"))
+                rec = self.manager.load(x["spec"], x.get("name"), x.get("config"), x.get("start_args"))
                 if x.get("autostart", True):
                     await self.manager.start(rec.name)
             except Exception as exc:

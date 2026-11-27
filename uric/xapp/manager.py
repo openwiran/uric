@@ -56,6 +56,8 @@ class XAppRecord:
     #: or taken from the metadata of the installed package of an entry point
     version: Optional[str] = None
     description: Optional[str] = None
+    #: keyword arguments passed to the xApp ``start()`` when it runs inside the RIC
+    start_args: dict = field(default_factory=dict)
 
     def _meta(self, attr: str) -> Optional[str]:
         """The xApp class attribute when defined, else the value known for the record."""
@@ -71,6 +73,7 @@ class XAppRecord:
                 "error": self.error, "started_at": self.started_at, "config": self.config,
                 "version": self._meta("version"),
                 "description": self._meta("description"),
+                "start_args": self.start_args or self.config.get("start_args") or {},
                 "requestor_id": ses.requestor_id if ses else None,
                 "subscriptions": [s.id for s in subs],
                 "status": ses.status if ses else {},
@@ -147,12 +150,19 @@ class XAppManager:
 
     # loading -----------------------------------------------------------------
 
-    def load(self, spec: str, name: Optional[str] = None, config: Optional[dict] = None) -> XAppRecord:
-        """Register an xApp from an entry point name or a spec."""
+    def load(self, spec: str, name: Optional[str] = None, config: Optional[dict] = None,
+             start_args: Optional[dict] = None) -> XAppRecord:
+        """Register an xApp from an entry point name or a spec.
+
+        ``start_args`` are the keyword arguments of the xApp ``start()`` when it runs
+        inside the RIC (``config["start_args"]`` is also accepted, for compatibility).
+        """
         rec = self.xapps.get(spec)
         if rec is not None and name in (None, spec):
             if config:
                 rec.config = {**rec.config, **config}
+            if start_args is not None:
+                rec.start_args = dict(start_args)
             self._import(rec)
             return rec
         cls = load_spec(spec)
@@ -160,7 +170,7 @@ class XAppManager:
         rec = self.xapps.get(xname)
         if rec is None or rec.state not in ("running",):
             rec = XAppRecord(name=xname, spec=spec, source="spec", cls=cls, config=dict(config or {}),
-                             state="loaded")
+                             state="loaded", start_args=dict(start_args or {}))
             self.xapps[xname] = rec
         return rec
 
@@ -175,12 +185,16 @@ class XAppManager:
 
     # lifecycle -----------------------------------------------------------------
 
-    async def start(self, name: str, config: Optional[dict] = None) -> XAppRecord:
+    async def start(self, name: str, config: Optional[dict] = None,
+                    start_args: Optional[dict] = None) -> XAppRecord:
         rec = self.xapps.get(name)
         if rec is None:
-            rec = self.load(name, config=config)
-        elif config:
-            rec.config = {**rec.config, **config}
+            rec = self.load(name, config=config, start_args=start_args)
+        else:
+            if config:
+                rec.config = {**rec.config, **config}
+            if start_args is not None:
+                rec.start_args = dict(start_args)
         if rec.state == "running":
             return rec
         if rec.source == "remote":
@@ -206,7 +220,7 @@ class XAppManager:
         holder: dict = {}
         cls = rec.cls
         config = dict(rec.config)
-        start_args = config.get("start_args") or {}
+        start_args = dict(rec.start_args or config.get("start_args") or {})
 
         def construct():
             names = {"config": config}

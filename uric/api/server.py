@@ -16,7 +16,7 @@ Endpoints (all JSON)::
     GET    /api/subscriptions               active subscriptions
     DELETE /api/subscriptions/{node}/{req}  delete a subscription ({req} = "requestor-instance")
     GET    /api/xapps                       xApps (installed, configured, remote)
-    POST   /api/xapps/{name}/start          start an embedded xApp (body: optional config)
+    POST   /api/xapps/{name}/start          start an embedded xApp (body: optional config, start_args)
     POST   /api/xapps/{name}/stop           stop an embedded xApp / disconnect a remote one
     GET    /api/events/history              recent platform events
     GET    /api/events                      live event stream (text/event-stream)
@@ -275,7 +275,8 @@ class APIServer:
                 if parts[2] == "start":
                     body = req.json()
                     try:
-                        rec = await self.xapps.start(name, body.get("config") if isinstance(body, dict) else None)
+                        body = body if isinstance(body, dict) else {}
+                        rec = await self.xapps.start(name, body.get("config"), body.get("start_args"))
                     except Exception as exc:
                         raise HTTPError(400, str(exc)) from None
                     return rec.to_dict()

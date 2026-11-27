@@ -33,7 +33,8 @@ Differences with the OSC framework:
   ``xAppBase(config=None, ric_address=None)``;
 * the same class can be installed as a package (``uric.xapps`` entry point)
   and run *inside* the RIC; ``start()`` is then called with the
-  ``start_args`` of the xApp configuration;
+  ``start_args`` of its entry in the RIC configuration file (next to
+  ``config``; ``config["start_args"]`` is also accepted);
 * RAN function IDs are discovered from the E2 node capabilities (use
   ``set_ran_func_id`` to force one);
 * UE identifiers may be a UE key (``"gNB-UEID:7"``), a UEID CHOICE tuple or an

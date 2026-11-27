@@ -15,7 +15,7 @@ It runs on Python ≥ 3.9 and uses only the standard library plus **[pycrate](ht
 ```
             +--------------------------- uric ----------------------------+
  xApps ---> | XAppManager (embedded xApps)  /  xApp interface TCP :4560   |
- (packages  |        \-------------> XAppContext <-------/              |
+ (packages  |        \-------------> XAppContext <-------/                |
  or procs)  |                         |                                   |
             |  REST + SSE API  <-  NearRTRIC core  ->  UE registry        |
  browser -> |  dashboard (static)     |  subscription manager             |
@@ -137,8 +137,19 @@ if __name__ == "__main__":
   while it is connected. When it disconnects, its subscriptions are deleted.
 * **Inside the RIC.** Install the xApp as a package and declare an entry point, or name it with `--xapp` or in the
   configuration file. Start it with `uric --xapp <name>`; once registered, the dashboard and REST API can start and
-  stop it. The RIC builds the class with the xApp configuration
-  as `config` and calls `start(**config["start_args"])` in a dedicated thread. The xApp code is the same in both modes.
+  stop it. The RIC builds the class with the entry's `config` as `config`, then calls `start(**start_args)` in a
+  dedicated thread. `start_args` comes from the entry's `"start_args"`, which sits next to `"config"` (see below). The
+  xApp code is the same in both modes.
+
+  ```json
+  "xapps": [
+    {"spec": "uric.xapps.kpm_monitor_xapp", "config": {"period_ms": 1000}, "start_args": {}, "autostart": true}
+  ]
+  ```
+
+  Allowed entry keys are `spec`, `name`, `config`, `start_args` and `autostart`. The RIC logs a warning for any other
+  key. For compatibility, `start_args` nested inside `config` is also accepted. The REST call
+  `POST /api/xapps/{name}/start` takes the same optional `config` and `start_args`.
 
 ```toml
 # pyproject.toml

@@ -102,6 +102,20 @@ class TestXAppBase(unittest.IsolatedAsyncioTestCase):
         await self.mgr.stop(rec.name)
         self.assertEqual(self.ric.subscriptions_of(owner=rec.name), [])
 
+    async def test_entry_level_start_args(self):
+        """start_args given next to config (config file entry / REST) reach start()."""
+        rec = self.mgr.load(f"{__name__}:KpmProbe", config={"period_ms": 100},
+                            start_args={"e2_node_id": "gnb_00101_b01", "metric_names": ["RRU.PrbTotDl"]})
+        rec = await self.mgr.start(rec.name)
+        self.assertEqual(rec.state, "running", rec.error)
+        self.assertEqual(rec.to_dict()["start_args"]["e2_node_id"], "gnb_00101_b01")
+        x = rec.instance
+        self.assertTrue(await wait_for(lambda: x.node_meas))
+        node, meas = x.node_meas[-1]
+        self.assertEqual(node, "gnb_00101_b01")
+        self.assertEqual(set(meas["measData"]), {"RRU.PrbTotDl"})
+        await self.mgr.stop(rec.name)
+
     async def test_embedded_rc(self):
         loop = asyncio.get_running_loop()
         rec = await self.mgr.start(self.mgr.load(f"{__name__}:SliceCtl").name)

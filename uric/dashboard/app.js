@@ -490,6 +490,7 @@
           <dt>Subscriptions</dt><dd>${x.subscriptions.length}</dd>
           ${x.error ? `<dt>Error</dt><dd style="color:var(--err)">${esc(x.error)}</dd>` : ""}</dl>
           ${Object.keys(x.config || {}).length ? `<details data-k="xc-${esc(x.name)}"><summary>Configuration</summary><pre class="json">${esc(JSON.stringify(x.config, null, 2))}</pre></details>` : ""}
+          ${x.source !== "remote" && Object.keys(x.start_args || {}).length ? `<details data-k="xa-${esc(x.name)}"><summary>Start arguments</summary><pre class="json">${esc(JSON.stringify(x.start_args, null, 2))}</pre></details>` : ""}
           ${Object.keys(x.status || {}).length ? `<details data-k="xs-${esc(x.name)}" open><summary>Status ${x.status_ts ? `<span class="muted">(${ago(x.status_ts)})</span>` : ""}</summary><div class="copy-wrap">
             <button type="button" class="copy-btn" data-act="xcopy" data-name="${esc(x.name)}" title="Copy status to clipboard" aria-label="Copy the status of ${esc(x.name)} to the clipboard">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 3.5V2.9A1.4 1.4 0 0 0 9.1 1.5H3.9A1.4 1.4 0 0 0 2.5 2.9v7.2a1.4 1.4 0 0 0 1.4 1.4h.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>Copy</button>
