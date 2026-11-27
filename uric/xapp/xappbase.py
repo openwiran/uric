@@ -455,7 +455,7 @@ class e2sm_rc_module:
     # OSC framework compatible helpers ------------------------------------------
 
     def send_control_request_style_2_action_6(self, e2_node_id, ue_id, min_prb_ratio, max_prb_ratio,
-                                              dedicated_prb_ratio, ack_request=1, sst=1, sd=None, plmn=None):
+                                              dedicated_prb_ratio, ack_request=1, sst=1, sd=0xFFFFFF, plmn=None):
         """Slice level PRB quota (ratios in percent, clamped to 0..100)."""
         clamp = lambda v: max(0, min(100, int(v)))  # noqa: E731
         mn, mx, ded = clamp(min_prb_ratio), clamp(max_prb_ratio), clamp(dedicated_prb_ratio)
