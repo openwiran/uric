@@ -217,12 +217,12 @@ class SimE2Node:
                         s(1, "RRM Policy Ratio List", [
                             s(2, "RRM Policy Ratio Group", [
                                 s(3, "RRM Policy", [
-                                    s(4, "RRM Policy Member List", [
-                                        s(5, "RRM Policy Member", [
-                                            s(6, "PLMN Identity"),
-                                            s(7, "S-NSSAI", [s(8, "SST"), s(9, "SD")])])], "list")]),
-                                s(10, "Min PRB Policy Ratio"), s(11, "Max PRB Policy Ratio"),
-                                s(12, "Dedicated PRB Policy Ratio")])], "list")]}]},
+                                    s(5, "RRM Policy Member List", [
+                                        s(6, "RRM Policy Member", [
+                                            s(7, "PLMN Identity"),
+                                            s(8, "S-NSSAI", [s(9, "SST"), s(10, "SD")])])], "list")]),
+                                s(11, "Min PRB Policy Ratio"), s(12, "Max PRB Policy Ratio"),
+                                s(13, "Dedicated PRB Policy Ratio")])], "list")]}]},
                 {"type": 3, "name": "Connected Mode Mobility Control", "actions": [
                     {"id": 1, "name": "Handover Control", "params": [
                         s(1, "Target Primary Cell ID", [
@@ -523,10 +523,11 @@ class SimE2Node:
             try:
                 for grp in params[1]:
                     g = grp[2]
-                    member = g[3][4][0][5]
-                    sst = member[7][8][0]
-                    self.slice_quota[sst] = {"min": g.get(10, 0), "max": g.get(11, 100),
-                                             "dedicated": g.get(12, 0)}
+                    # E2SM-RC v5.00 RAN parameter IDs (see uric.codec.rc.slice_prb_quota_params)
+                    member = g[3][5][0][6]
+                    sst = member[8][9][0]
+                    self.slice_quota[sst] = {"min": g.get(11, 0), "max": g.get(12, 100),
+                                             "dedicated": g.get(13, 0)}
             except (KeyError, IndexError, TypeError):
                 return await fail(cause("ricRequest", "control-message-invalid"))
             log.info("%s: slice PRB quota now %s", self.name, self.slice_quota)

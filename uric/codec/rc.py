@@ -225,16 +225,32 @@ def slice_prb_quota_params(slices: Sequence[dict], plmn: str = "00101") -> dict:
 
     ``slices`` items: ``{"sst": 1, "sd": 0x000001 (optional), "min": 10,
     "max": 100, "dedicated": 5}`` (ratios in percent).
+
+    RAN parameter IDs follow E2SM-RC v5.00, as used by the srsRAN / OCUDU gNB and
+    the srsRAN oran-sc-ric xApp framework (there is no RAN parameter 4)::
+
+        1  RRM Policy Ratio List (LIST)
+        2  > RRM Policy Ratio Group (STRUCTURE)
+        3  >> RRM Policy (STRUCTURE)
+        5  >>> RRM Policy Member List (LIST)
+        6  >>>> RRM Policy Member (STRUCTURE)
+        7  >>>>> PLMN Identity (ELEMENT)
+        8  >>>>> S-NSSAI (STRUCTURE)
+        9  >>>>>> SST (ELEMENT)
+        10 >>>>>> SD (ELEMENT)
+        11 >> Min PRB Policy Ratio (ELEMENT)
+        12 >> Max PRB Policy Ratio (ELEMENT)
+        13 >> Dedicated PRB Policy Ratio (ELEMENT)
     """
     groups = []
     for s in slices:
-        snssai: dict[int, Any] = {8: bytes([s["sst"]])}
+        snssai: dict[int, Any] = {9: bytes([s["sst"]])}
         if s.get("sd") is not None:
-            snssai[9] = int(s["sd"]).to_bytes(3, "big")
-        member = {6: plmn_to_bytes(s.get("plmn", plmn)), 7: snssai}
-        groups.append({2: {3: {4: [{5: member}]},
-                           10: int(s.get("min", 0)), 11: int(s.get("max", 100)),
-                           12: int(s.get("dedicated", 0))}})
+            snssai[10] = int(s["sd"]).to_bytes(3, "big")
+        member = {7: plmn_to_bytes(s.get("plmn", plmn)), 8: snssai}
+        groups.append({2: {3: {5: [{6: member}]},
+                           11: int(s.get("min", 0)), 12: int(s.get("max", 100)),
+                           13: int(s.get("dedicated", 0))}})
     return {1: groups}
 
 

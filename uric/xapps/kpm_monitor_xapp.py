@@ -117,7 +117,7 @@ class KPMMonitor(xAppBase):
     # ------------------------------------------------------------------ main loop
 
     @xAppBase.start_function
-    def start(self, poll_period_s):
+    def start(self, poll_period_s=None):
         poll_period = poll_period_s or float(self.config.get("poll_period_s", 1.0))
         print(poll_period)
         while self.running:

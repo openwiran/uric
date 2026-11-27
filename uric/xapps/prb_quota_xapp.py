@@ -28,10 +28,10 @@ class PRBQuota(xAppBase):
     def __init__(self, config, ue_timeout_s, report_period, granul_period, step_period, ric_address):
         super().__init__(config, ric_address)
         self.ue_timeout_s = ue_timeout_s or float(self.config.get("ue_timeout_s", 5.0))
-        self.report_period = report_period or int(self.config.get("ue_timeout_s", 1000))
+        self.report_period = report_period or int(self.config.get("report_period", 1000))
         self.granul_period = granul_period or int(self.config.get("granul_period", 1000))
         self.step_period = step_period or float(self.config.get("step_period", 5.0))
-        self.ues = {}      
+        self.ues = {}       # ue_id -> {"e2_node_id": node that reported the UE, "last_seen": monotonic time}
         self.nodes = {}          
         self.ues_lock = threading.Lock()  
 
@@ -42,13 +42,13 @@ class PRBQuota(xAppBase):
                                                    dedicated_prb_ratio=100, ack_request=1)
                                                    
     def active_ues(self):
-        """UEs reported within the last ue_timeout seconds; expired ones are removed."""
+        """(ue_id, e2_node_id) of the UEs reported within the last ue_timeout seconds; expired ones are removed."""
         now = time.monotonic()
         with self.ues_lock:
-            for ue_id in [u for u, t in self.ues.items() if now - t > self.ue_timeout_s]:
+            for ue_id in [u for u, ue in self.ues.items() if now - ue["last_seen"] > self.ue_timeout_s]:
                 self.log.info("UE ID: %s not reported for %ss, removing", ue_id, self.ue_timeout_s)
                 del self.ues[ue_id]
-            return sorted(self.ues)
+            return sorted((ue_id, ue["e2_node_id"]) for ue_id, ue in self.ues.items())
 
     # ------------------------------------------------------------------ callbacks
     
@@ -59,7 +59,8 @@ class PRBQuota(xAppBase):
             for ue_id in meas_data.get("ueMeasData", {}):
                 if ue_id not in self.ues:
                     self.log.info("Discovered UE ID: %s on E2 node: %s", ue_id, e2_agent_id)
-                self.ues[ue_id] = now
+                # remember which E2 node reported the UE: its PRB quota requests go to that node
+                self.ues[ue_id] = {"e2_node_id": e2_agent_id, "last_seen": now}
 
     # ------------------------------------------------------------------ subscriptions
                     
@@ -90,14 +91,14 @@ class PRBQuota(xAppBase):
                 for e2_node_id, e2_node in e2_nodes.items():
                     if e2_node_id not in self.nodes:
                         self.subscribe_ue_discovery(e2_node_id)                      
-                ue_ids = self.active_ues()
-                if not ue_ids:
+                ues = self.active_ues()
+                if not ues:
                     self.log.info("No UEs discovered yet, waiting...")
-                    time.sleep(1)
+                    self.sleep(1)
                     continue
                 min_prb_ratio, max_prb_ratio = PRB_SCHEDULE[step % len(PRB_SCHEDULE)]
-                for ue_id in ue_ids:
-                    self.send_prb_quota(e2_node_id, ue_id, min_prb_ratio, max_prb_ratio)
+                for ue_id, ue_node_id in ues:
+                    self.send_prb_quota(ue_node_id, ue_id, min_prb_ratio, max_prb_ratio)
                 step += 1
                 self.set_status(ues=self.ues, nodes=self.nodes)
             except RICError as e:
