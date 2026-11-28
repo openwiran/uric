@@ -18,8 +18,11 @@ Endpoints (all JSON)::
     GET    /api/xapps                       xApps (installed, configured, remote)
     POST   /api/xapps/{name}/start          start an embedded xApp (body: optional config, start_args)
     POST   /api/xapps/{name}/stop           stop an embedded xApp / disconnect a remote one
+    GET    /api/latency[?xapp=&node=&stage=] control-loop latency histograms (ms)
+    POST   /api/latency/reset               clear the latency histograms
     GET    /api/events/history              recent platform events
-    GET    /api/events                      live event stream (text/event-stream)
+    GET    /api/events                      live event stream (text/event-stream);
+                                            a ``latency`` event (compact rollup) every 5 s
 """
 
 from __future__ import annotations
@@ -40,6 +43,9 @@ from ..xapp.manager import XAppManager
 log = logging.getLogger("uric.api")
 
 DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard")
+
+#: period of the ``latency`` SSE event
+LATENCY_EVENT_PERIOD = 5.0
 
 _REASONS = {200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 404: "Not Found",
             405: "Method Not Allowed", 409: "Conflict", 500: "Internal Server Error",
@@ -82,16 +88,31 @@ class APIServer:
         self.host, self.port = host, port
         self.static_dir = os.path.abspath(static_dir)
         self.server: Optional[asyncio.base_events.Server] = None
+        self._lat_task: Optional[asyncio.Task] = None
+        self._sse_clients = 0
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self._client, self.host, self.port)
+        if self.ric.latency.enabled:
+            self._lat_task = asyncio.create_task(self._latency_ticker(), name="api-latency-event")
         self.port = self.server.sockets[0].getsockname()[1]
         log.info("dashboard and API on http://%s:%d/", "localhost" if self.host in ("0.0.0.0", "::") else self.host,
                  self.port)
 
     async def stop(self) -> None:
+        if self._lat_task:
+            self._lat_task.cancel()
         if self.server:
             self.server.close()
+
+    async def _latency_ticker(self) -> None:
+        while True:
+            await asyncio.sleep(LATENCY_EVENT_PERIOD)
+            if self._sse_clients:
+                try:
+                    self.ric.events.emit("latency", self.ric.latency.compact(), record=False)
+                except Exception:
+                    log.exception("latency event failed")
 
     # ------------------------------------------------------------------ HTTP
 
@@ -150,6 +171,7 @@ class APIServer:
                      b"Connection: keep-alive\r\n\r\n")
         await writer.drain()
         q = self.ric.events.queue()
+        self._sse_clients += 1
         try:
             writer.write(b"retry: 2000\n\n")
             while True:
@@ -164,6 +186,7 @@ class APIServer:
         except (ConnectionError, asyncio.CancelledError):
             pass
         finally:
+            self._sse_clients -= 1
             self.ric.events.unqueue(q)
 
     async def _handle(self, req: Request):
@@ -282,6 +305,18 @@ class APIServer:
                     return rec.to_dict()
                 if parts[2] == "stop":
                     return (await self.xapps.stop(name)).to_dict()
+            raise HTTPError(404, "not found")
+
+        if head == "latency":
+            lat = ric.latency
+            if len(parts) == 1 and m == "GET":
+                q = req.query
+                return lat.snapshot(xapp=q.get("xapp") or None, node=q.get("node") or None,
+                                    stage=q.get("stage") or None,
+                                    buckets=q.get("buckets", "") in ("1", "true", "yes"))
+            if len(parts) == 2 and parts[1] == "reset" and m == "POST":
+                lat.reset()
+                return {"ok": True}
             raise HTTPError(404, "not found")
 
         if head == "events" and len(parts) == 2 and parts[1] == "history":

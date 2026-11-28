@@ -41,9 +41,10 @@ class XAppSession:
         return self.ric.subscriptions_of(owner=self.name)
 
     async def control(self, node_id: str, ran_function_id: int, header: bytes, message: bytes,
-                      ack: bool = True, call_process_id: Optional[bytes] = None) -> ControlResult:
+                      ack: bool = True, call_process_id: Optional[bytes] = None,
+                      trace: Optional[int] = None) -> ControlResult:
         return await self.ric.control(node_id, ran_function_id, header, message, ack=ack,
-                                      call_process_id=call_process_id, owner=self.name)
+                                      call_process_id=call_process_id, owner=self.name, trace=trace)
 
     def set_status(self, **kw) -> None:
         self.status.update(kw)

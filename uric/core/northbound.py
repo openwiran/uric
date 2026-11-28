@@ -10,18 +10,31 @@ Requests (xApp -> RIC) carry an ``id`` and an ``op``; the RIC answers with
 "error": ".."}``:
 
 * ``hello {name, version?, description?}`` – must be first; registers the xApp
-  (visible in the dashboard)
+  (visible in the dashboard). The result is ``{name, ric, features?, latency?}``:
+  ``features`` lists the optional protocol additions this RIC supports
+  (``"trace"``, ``"timing"``, ``"latency"``) and ``latency`` is
+  ``{"enabled": bool}``. Old RICs send neither: clients then use none of them.
 * ``nodes`` – connected E2 nodes with their RAN functions/capabilities
 * ``ues {node?}`` – UE registry, with ``ue_id_raw`` (APER encoded UEID)
 * ``subscribe {node, ran_function_id, event_trigger, actions:[{id,type,definition}]}``
 * ``unsubscribe {sub}``
-* ``control {node, ran_function_id, header, message, ack, call_process_id?}``
+* ``control {node, ran_function_id, header, message, ack, call_process_id?, trace?}``
+  – ``trace`` (optional) is the trace ID of the indication that triggered the
+  control; it links the two for the ``loop`` latency stage
 * ``status {status}`` – publish xApp status
+* ``timing {samples: [{stage, ns, node?, trace?}]}`` (optional) – a batch of
+  xApp side durations (``xapp_queue``, ``xapp_callback``,
+  ``xapp_control_call``) in nanoseconds of the xApp's own clock. Clients batch
+  samples (every N samples or T ms), never one op per indication, and may
+  ignore the answer
+* ``latency {node?, stage?}`` (optional) – RIC latency snapshot restricted to
+  this xApp (milliseconds)
 
 Events (RIC -> xApp) have an ``event`` key, e.g. ``{"event": "indication",
 "sub", "node", "ran_function_id", "action_id", "sn", "type", "header",
-"message", "call_process_id", "sm"}``. When the connection closes, every
-subscription owned by the xApp is deleted.
+"message", "call_process_id", "sm", "trace"?}`` (``trace``: optional opaque
+integer, present when latency instrumentation is on). When the connection
+closes, every subscription owned by the xApp is deleted.
 """
 
 from __future__ import annotations
@@ -35,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..codec.asn import to_jsonable
 from ..codec.e2sm import encode_ueid
+from .latency import XAPP_STAGES, now_ns
 from .model import Action, Indication
 
 if TYPE_CHECKING:
@@ -44,6 +58,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("uric.northbound")
 
 DEFAULT_XAPP_PORT = 4560
+#: optional protocol additions advertised in the ``hello`` answer
+FEATURES = ["trace", "timing", "latency"]
 
 
 def _hex(b: Optional[bytes]) -> Optional[str]:
@@ -52,6 +68,10 @@ def _hex(b: Optional[bytes]) -> Optional[str]:
 
 def _unhex(s: Optional[str]) -> Optional[bytes]:
     return bytes.fromhex(s) if s else None
+
+
+def _trace(v: Any) -> Optional[int]:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 class NorthboundServer:
@@ -85,15 +105,22 @@ class NorthboundServer:
                 writer.write(struct.pack("!I", len(data)) + data)
                 await writer.drain()
 
+        lat = self.ric.latency
+
         async def on_indication(ind: Indication) -> None:
+            ev = {"event": "indication", "sub": ind.subscription.id, "node": ind.node_id,
+                  "ran_function_id": ind.ran_function_id, "action_id": ind.action_id,
+                  "sn": ind.sn, "type": ind.type, "header": _hex(ind.header),
+                  "message": _hex(ind.message), "call_process_id": _hex(ind.call_process_id),
+                  "sm": ind.subscription.service_model}
+            if ind.trace is not None:
+                ev["trace"] = ind.trace
             try:
-                await send({"event": "indication", "sub": ind.subscription.id, "node": ind.node_id,
-                            "ran_function_id": ind.ran_function_id, "action_id": ind.action_id,
-                            "sn": ind.sn, "type": ind.type, "header": _hex(ind.header),
-                            "message": _hex(ind.message), "call_process_id": _hex(ind.call_process_id),
-                            "sm": ind.subscription.service_model})
+                await send(ev)
             except (ConnectionError, RuntimeError):
-                pass
+                return
+            if ind.rx_ns is not None and ctx is not None:
+                lat.record("ric_dispatch", now_ns() - ind.rx_ns, ctx.name, ind.node_id, ind.trace)
 
         try:
             while True:
@@ -116,7 +143,8 @@ class NorthboundServer:
                         self.manager.xapps[name] = rec
                         self.manager.notify(rec)
                         log.info("remote xApp %s connected from %s", name, peer)
-                        result: Any = {"name": name, "ric": self.ric.info()}
+                        result: Any = {"name": name, "ric": self.ric.info(), "features": FEATURES,
+                                       "latency": {"enabled": self.ric.latency.enabled}}
                     elif ctx is None:
                         raise ValueError("send 'hello' first")
                     else:
@@ -173,8 +201,24 @@ class NorthboundServer:
         if op == "control":
             res = await ctx.control(msg["node"], int(msg["ran_function_id"]), _unhex(msg["header"]),
                                     _unhex(msg["message"]), ack=bool(msg.get("ack", True)),
-                                    call_process_id=_unhex(msg.get("call_process_id")))
+                                    call_process_id=_unhex(msg.get("call_process_id")),
+                                    trace=_trace(msg.get("trace")))
             return res.to_dict()
+        if op == "timing":
+            lat = ric.latency
+            n = 0
+            for smp in msg.get("samples") or []:
+                stage = smp.get("stage")
+                if stage not in XAPP_STAGES:
+                    continue  # the RIC stages are measured by the RIC only
+                ns = smp.get("ns")
+                if not isinstance(ns, int) or isinstance(ns, bool) or ns < 0:
+                    continue  # malformed sample: skip it, keep the rest of the batch
+                lat.record(stage, ns, ctx.name, smp.get("node"), _trace(smp.get("trace")))
+                n += 1
+            return {"accepted": n}
+        if op == "latency":
+            return ric.latency.snapshot(xapp=ctx.name, node=msg.get("node"), stage=msg.get("stage"))
         if op == "status":
             ctx.set_status(**(msg.get("status") or {}))
             return {"ok": True}

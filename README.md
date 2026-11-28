@@ -64,7 +64,8 @@ uric-sim --nodes 3 --ues 4    # or: python -m uric.sim ...
 ```
 uric [--config FILE] [--e2-host H] [--e2-port P] [--transport auto|sctp|tcp|both]
      [--plmn 00101] [--ric-id 1] [--http-host H] [--http-port 8080|-1] [--xapp-port 4560|-1]
-     [--xapp SPEC ...] [--list-xapps] [--log-level INFO]
+     [--xapp SPEC ...] [--list-xapps] [--latency | --no-latency] [--latency-log FILE]
+     [--log-level INFO]
 ```
 
 `--xapp` accepts any of these:
@@ -169,7 +170,8 @@ my-xapp = "my_xapp.app:MyXapp"
 | `subscribe(e2_node_id, ran_function_id, event_trigger_def, action_def, callback, e2sm_type)` | raw subscription. Returns the subscription ID |
 | `unsubscribe(sub_id)`, `unsubscribe_all()`, `stop()`, `signal_handler(sig, frame)` | as in OSC |
 | `get_e2_nodes()`, `get_e2_node_ids()`, `get_ues(e2_node_id=None)` | RIC state, including node capabilities and UE keys, cells and metrics *(uric extension)* |
-| `send_control_request(node, ran_function_id, header, message, ack_request=1)` | raw RIC control |
+| `send_control_request(node, ran_function_id, header, message, ack_request=1, call_process_id=None, *, trace=...)` | raw RIC control. `trace` defaults to the trace ID of the indication being handled *(uric extension)* |
+| `current_trace()`, `use_trace(trace)`, `get_latency(e2_node_id=None, stage=None)` | control-loop latency, see [Latency instrumentation](#latency-instrumentation) *(uric extension)* |
 | `set_status(**kw)`, `sleep(s)`, `self.config`, `self.log` | dashboard status, a stop-aware sleep, configuration, logging |
 
 Callbacks are called as `callback(e2_agent_id, subscription_id, indication_hdr, indication_msg)`.
@@ -231,7 +233,133 @@ How uric differs from the OSC framework:
 | `GET /api/subscriptions`, `DELETE /api/subscriptions/{node}/{req}-{inst}` | subscriptions |
 | `GET /api/xapps` | xApps (installed, configured and remote) |
 | `POST /api/xapps/{name}/start` and `/stop` | start or stop an embedded xApp, or disconnect a remote one |
-| `GET /api/events/history`, `GET /api/events` | recent events, and the live stream (SSE) |
+| `GET /api/latency[?xapp=&node=&stage=&buckets=1]` | control-loop latency histograms in ms (see below) |
+| `POST /api/latency/reset` | clear the latency histograms and counters |
+| `GET /api/events/history`, `GET /api/events` | recent events, and the live stream (SSE). The stream also carries a `latency` event with the compact rollup every 5 s |
+
+## Latency instrumentation
+
+uric measures how long each stage of the near-RT control loop takes:
+
+```
+E2 node ──Indication──▶ RIC ──▶ xApp callback ──▶ RIC ──Control Request──▶ E2 node ──Ack──▶ RIC
+```
+
+Every interval uses `time.perf_counter_ns()` timestamps taken in **one process**. The RIC measures its own stages, and
+the xApp (embedded or remote) measures its stages and reports the durations to the RIC. No timestamp ever crosses a
+process or host boundary, so remote xApps on another machine give correct numbers without clock synchronisation.
+
+| Stage | From → to | Measured by |
+|---|---|---|
+| `e2ap_decode` | PDU received → E2AP decode done (every PDU) | RIC |
+| `sm_decode` | E2SM-KPM/RC decode and UE registry update | RIC |
+| `ric_dispatch` | PDU received → indication handed to the xApp (embedded: queued; remote: frame written to the socket) | RIC |
+| `loop` | **PDU received → Control Request written to the E2 transport**, for a control triggered by that indication | RIC |
+| `control_encode` | `control()` entered → Control Request written | RIC |
+| `e2_ack_rtt` | Control Request written → Acknowledge / Failure received (`ack_request=1` only) | RIC |
+| `xapp_queue` | indication received by the xApp link → dequeued by the dispatcher | xApp |
+| `xapp_callback` | subscription callback, including E2SM unpacking | xApp |
+| `xapp_control_call` | `send_control_request()` call → result, as seen by the xApp | xApp |
+
+**Linking a control to its indication.** Each indication gets an opaque integer trace ID, and the RIC keeps its receive
+time in a bounded map (10 000 entries, `trace_ttl_s` seconds). While a subscription callback runs, the trace ID is held
+in a thread-local, so `send_control_request()`, and with it every `e2sm_rc` helper, sends it with the control
+automatically. A control sent from another thread, such as the `start()` thread, carries no trace ID. It is counted as
+*untriggered* and gives no `loop` sample. A control whose trace ID is older than `trace_ttl_s` (an overloaded xApp
+whose queue holds indications that long) is counted as `controls_trace_expired`, also with no `loop` sample. Check
+this counter before reading `loop` percentiles under overload: they leave out the slowest loops. To link such a control anyway, take the ID with `self.current_trace()`
+inside the callback, then pass it with `send_control_request(..., trace=tid)` or wrap the call in
+`with self.use_trace(tid): ...`.
+
+**Statistics.** Histograms are kept per `(stage, xApp, E2 node)`, with rollups per stage, per xApp and per node. The
+buckets are log-spaced from 1 µs to 100 s with ratio 1.1, so a percentile is within 4.9 % of the exact value; count, sum,
+min and max are exact. Samples are not kept in memory. Optionally, every raw sample is appended to a JSON-lines file
+(`{"t", "stage", "ns", "xapp", "node", "trace"}`) by a background thread. When its bounded queue is full, samples are
+dropped and counted (`raw_log.dropped`) rather than slowing the RIC down. xApp-side samples are batched, for embedded
+and remote xApps alike, and reach the RIC within about 1 s. `get_latency()` and stopping the xApp flush them at once.
+
+**Configuration.** Instrumentation is on by default. When it is off, each hook costs one boolean check.
+
+```json
+"latency": {"enabled": true, "log_file": null, "trace_ttl_s": 10}
+```
+
+On the command line: `--latency` / `--no-latency` and `--latency-log FILE`.
+
+**Interfaces.**
+
+* `GET /api/latency` returns `stages`, `by_xapp`, `by_node`, `series` (one entry per key), `counters`
+  (`controls_triggered`, `controls_untriggered`, `controls_trace_expired`, also per xApp and per node) and `traces`. Values are milliseconds
+  (floats) next to the exact `count`. Filter with `?xapp=NAME&node=ID&stage=S`, and add `buckets=1` to get the
+  histogram buckets. `POST /api/latency/reset` clears everything.
+* `xAppBase.get_latency()` returns the same snapshot restricted to the calling xApp. Remote xApps use the northbound
+  `latency` op.
+* The dashboard shows a *Control-loop latency* card on the Overview page (loop p50/p95/p99 against the 10 ms near-RT
+  bound, plus a table of every stage), a latency table for each xApp on the xApps page, and reset buttons.
+* Northbound protocol additions, all optional: the `hello` answer lists `features`; `indication` events carry `trace`;
+  `control` accepts `trace`; a new `timing` op carries batched xApp samples (sent every 256 samples or every 1 s);
+  a new `latency` op returns the snapshot. xApps built with an older SDK keep working (their controls count as
+  untriggered). A new xApp connected to an older RIC sends none of these and `get_latency()` returns `{}`.
+
+**Benchmark.** `tools/bench_latency.py` starts the RIC, the simulator and the reflex xApp
+(`uric.xapps.reflex_xapp`: one RC slice PRB quota control for every KPM indication), each as its own process, and
+measures over a fixed window:
+
+```bash
+python tools/bench_latency.py --nodes 3 --ues 4 --period-ms 100 --duration 60 --mode both --compare --repeat 2
+```
+
+* `--mode embedded|remote|both` runs the xApp inside the RIC or over the northbound interface.
+* `--compare` runs every configuration with and without instrumentation and reports the difference in throughput
+  (indications handled per second) and in RIC CPU time per indication.
+* `--latency-log PREFIX` also writes the raw samples.
+* `--min-period-ms` lowers the simulator's 50 ms floor, for saturation runs.
+
+The tool prints the stage table and writes `bench-results/results.json` with the full configuration (seed,
+interpreter, platform, git commit), per-run counters, CPU time and complete histograms.
+
+**Measured results.** Reference runs on an Apple M4 Max (macOS, CPython 3.14.4, TCP E2 transport, reflex xApp with
+ack). These are indicative only: rerun the benchmark on your own target.
+
+| Setup | Mode | loop p50 / p95 / p99 / max (ms) |
+|---|---|---|
+| 3 nodes × 4 UEs, 100 ms period (~30 ind/s), 60 s | embedded | 3.8 / 5.6 / 6.1 / 7.5 |
+| same | remote | 5.1 / 7.4 / 8.2 / 9.6 |
+| 10 nodes, 10 ms period (~965 ind/s), 30 s | embedded | 3.5 / 49.9 / 142 / 159 |
+| same | remote | 3.1 / 5.6 / 8.2 / 21.8 |
+
+Cost of the instrumentation, on vs off:
+
+| Load | Mode | Throughput | RIC CPU / indication |
+|---|---|---|---|
+| ~30 ind/s | embedded / remote | −0.03 % / +0.17 % | +0.2 % / +1.7 % |
+| ~965 ind/s (RIC not saturated) | embedded / remote | −0.02 % / +0.06 % | +4.3 % / +4.5 % |
+| ~3,600 ind/s offered (saturated) | remote | −0.21 % | +1.2 % |
+| ~3,600 ind/s offered (saturated) | embedded | **−4.7 %** (3 runs each) | −0.5 % |
+
+The microbenchmarked cost of one hook is 0.3–0.8 µs, and 0.03 µs when instrumentation is disabled. That adds up to
+roughly 5–10 µs per indication.
+
+Caveats when reading these numbers:
+
+* **Overloaded embedded xApps.** This is the only case that misses the 3 % throughput target. The RIC event loop runs at
+  about 98 % CPU, and the xApp is saturated, with its queue growing to about 24 s. The embedded xApp's throughput is
+  then set by how often it gets the GIL from the event loop, and about 1 % of extra work on the loop costs it about 5 %
+  of throughput. xApp-side samples are already batched, which reduced the loss from 7.2 % to 4.7 %. Remote xApps are
+  unaffected. For heavy loads, run xApps remotely, or measure with `--no-latency` when saturated embedded throughput
+  is what you are measuring.
+* **The GIL also limits latency.** At about 1,000 ind/s, the queue of an embedded xApp reaches a p99 of 142 ms
+  (`xapp_queue`), while the same xApp run remotely keeps the loop p99 at 8 ms.
+* **Expired traces.** Under overload, controls whose indication is older than `trace_ttl_s` are counted as
+  `controls_trace_expired` and give no `loop` sample, so the `loop` percentiles leave out the slowest loops. Always
+  report this counter next to the percentiles.
+* **CPU frequency scaling.** Individual stages ran about 3× faster at ~1,000 ind/s than at ~30 ind/s (for example,
+  `e2ap_decode` p50 fell from 0.24 to 0.08 ms), most likely because of CPU frequency scaling. Pin the CPU governor
+  or power mode, and state it, when you publish numbers.
+* **Synchronised reporting.** With identical periods the simulated nodes report in the same phase, so `xapp_queue`
+  (about 2 ms at 30 ind/s) is mostly indications waiting behind each other's callbacks in a burst.
+* **Unbounded xApp inbox.** The inbox has no size limit, so a saturated xApp's backlog, and its memory use, grows
+  without bound.
 
 ## Development
 

@@ -5,6 +5,7 @@
   const state = {
     ric: null, nodes: [], ues: [], subs: [], xapps: [], events: [],
     nodeDetail: {}, history: {}, nodeSamples: {}, ueSamples: {}, live: false, ueFilter: "", ueNode: "", evFilter: "",
+    latency: null,
   };
   const HIST = 60;
   const view = document.getElementById("view");
@@ -135,6 +136,8 @@
       const [ric, nodes, ues, subs, xapps] = await Promise.all([
         api("ric"), api("nodes"), api("ues"), api("subscriptions"), api("xapps")]);
       Object.assign(state, { ric, nodes, ues, subs, xapps });
+      // first load only: afterwards the RIC pushes a "latency" SSE event every 5 s
+      if (state.latency === null) state.latency = await api("latency").catch(() => false);
       for (const n of nodes) for (const [k, v] of Object.entries(n.metrics || {})) pushHist(`n:${n.id}:${k}`, v);
       for (const n of nodes) recordSample(state.nodeSamples, n.id, n.metrics_ts, n.metrics);
       for (const u of ues) recordSample(state.ueSamples, u.key, u.metrics_ts, u.metrics, { node_id: u.node_id });
@@ -170,6 +173,12 @@
     es.onmessage = (m) => {
       let ev;
       try { ev = JSON.parse(m.data); } catch (e) { return; }
+      if (ev.event === "latency") {
+        state.latency = ev.data;
+        const pg = currentRoute()[0];
+        if (pg === "overview" || pg === "xapps") render();
+        return;
+      }
       state.events.unshift(ev);
       if (state.events.length > 500) state.events.pop();
       if (/^(node|subscription|xapp|ue\.(added|removed))/.test(ev.event)) scheduleRefresh();
@@ -234,9 +243,69 @@
       <div class="panel"><div class="panel-head"><h2>E2 nodes</h2><a href="#/nodes">all nodes →</a></div>
         <div class="panel-body flush table-wrap">${nodesTable(state.nodes)}</div></div>
     </div>
+    ${latencyCard()}
     <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Recent events</h2><a href="#/events">event log →</a></div>
       <div class="events short">${eventRows(state.events.slice(0, 40))}</div></div>`;
   }
+  // ------------------------------------------------------------ latency
+  const STAGE_LABEL = {
+    e2ap_decode: "E2AP decode", sm_decode: "E2SM decode + registry", ric_dispatch: "RIC → xApp dispatch",
+    loop: "Indication → control (loop)", control_encode: "Control encode + send", e2_ack_rtt: "E2 control ack RTT",
+    xapp_queue: "xApp queue", xapp_callback: "xApp callback", xapp_control_call: "xApp control call",
+  };
+  const ms = (v) => (v == null ? "–" : v < 1 ? v.toFixed(3) : v < 100 ? v.toFixed(2) : v.toFixed(0));
+  function latBar(v, scale) {
+    const w = scale > 0 ? Math.max(1, Math.min(100, (v / scale) * 100)) : 0;
+    return `<span class="lat-bar"><span style="width:${w.toFixed(1)}%"></span></span>`;
+  }
+  function latencyTable(stages, counters) {
+    const keys = Object.keys(stages || {});
+    if (!keys.length) return `<div class="empty">No samples yet</div>`;
+    const scale = Math.max(...keys.map((k) => stages[k].p99 || 0));
+    const rows = keys.map((k) => {
+      const s = stages[k];
+      return `<tr><td title="${esc(k)}">${esc(STAGE_LABEL[k] || k)}</td><td class="num">${fmtNum(s.count)}</td>
+        <td class="num">${ms(s.p50)}</td><td class="num">${ms(s.p95)}</td><td class="num">${ms(s.p99)}</td>
+        <td class="num">${ms(s.max)}</td><td class="bar-cell">${latBar(s.p99, scale)}</td></tr>`;
+    }).join("");
+    const c = counters || {};
+    const foot = (c.controls_triggered || c.controls_untriggered || c.controls_trace_expired)
+      ? `<div class="muted lat-foot">controls linked to an indication: ${fmtNum(c.controls_triggered || 0)} · untriggered: ${fmtNum(c.controls_untriggered || 0)}${c.controls_trace_expired ? ` · trace expired: ${fmtNum(c.controls_trace_expired)}` : ""}</div>` : "";
+    return `<table class="lat"><thead><tr><th>Stage</th><th class="num">Count</th><th class="num">p50 ms</th>
+      <th class="num">p95 ms</th><th class="num">p99 ms</th><th class="num">max ms</th><th>p99</th></tr></thead><tbody>${rows}</tbody></table>${foot}`;
+  }
+  function latencyCard() {
+    const L = state.latency;
+    if (L === false || L === null) return "";
+    const head = `<div class="panel-head"><h2>Control-loop latency</h2><div class="btns">
+      <span class="muted">${L.enabled ? `since ${time(L.since)}` : "instrumentation disabled"}</span>
+      ${L.enabled ? `<button data-act="latreset">Reset</button>` : ""}</div></div>`;
+    if (!L.enabled) return `<div class="panel" style="margin-top:16px">${head}</div>`;
+    const loop = (L.stages || {}).loop;
+    let big = `<div class="empty">No control linked to an indication yet</div>`;
+    if (loop && loop.count) {
+      const scale = Math.max(loop.p99, 10);
+      const budget = 10 / scale * 100;  // near-RT lower bound: 10 ms
+      big = `<div class="lat-loop">${["p50", "p95", "p99"].map((p) => `<div class="lat-q"><div class="label">${p}</div>
+        <div class="value">${ms(loop[p])}<span class="unit"> ms</span></div>
+        <span class="lat-bar big"><span style="width:${Math.max(1, loop[p] / scale * 100).toFixed(1)}%"></span>
+        <i class="budget" style="left:${budget.toFixed(1)}%" title="10 ms near-RT lower bound"></i></span></div>`).join("")}
+        <div class="lat-q"><div class="label">samples</div><div class="value">${fmtNum(loop.count)}</div>
+        <div class="hint">max ${ms(loop.max)} ms · mean ${ms(loop.mean)} ms</div></div></div>`;
+    }
+    return `<div class="panel" style="margin-top:16px">${head}<div class="panel-body">${big}
+      <details data-k="lat-stages"><summary>All stages (all xApps)</summary><div class="table-wrap">${latencyTable(L.stages, L.counters)}</div></details>
+      </div></div>`;
+  }
+  function xappLatency(name) {
+    const L = state.latency;
+    if (!L || !L.enabled) return "";
+    const st = (L.by_xapp || {})[name];
+    if (!st) return "";
+    return `<details data-k="xl-${esc(name)}" open><summary>Latency</summary><div class="table-wrap">
+      ${latencyTable(st, (L.counters_by_xapp || {})[name])}</div></details>`;
+  }
+
   const stat = (l, v, h) => `<div class="panel stat"><div class="label">${esc(l)}</div><div class="value">${v}</div><div class="hint">${esc(h)}</div></div>`;
 
   function topology() {
@@ -477,7 +546,9 @@
   }
 
   function renderXApps() {
-    return `<div class="page-head"><div><h1>xApps</h1><div class="sub">Embedded xApps (installed packages with a <code>uric.xapps</code> entry point, or given with <code>--xapp</code> / in the configuration file) and standalone xApps connected to the xApp interface</div></div></div>
+    const L = state.latency;
+    return `<div class="page-head"><div><h1>xApps</h1><div class="sub">Embedded xApps (installed packages with a <code>uric.xapps</code> entry point, or given with <code>--xapp</code> / in the configuration file) and standalone xApps connected to the xApp interface</div></div>
+      ${L && L.enabled ? `<div class="btns"><button data-act="latreset">Reset latency</button></div>` : ""}</div>
       <div class="grid grid-2">${state.xapps.map((x) => `<div class="panel">
         <div class="panel-head"><h2>${esc(x.name)}${x.version ? ` <span class="muted">v${esc(x.version)}</span>` : ""}</h2>${stateBadge(x.state)}</div>
         <div class="panel-body">
@@ -495,6 +566,7 @@
             <button type="button" class="copy-btn" data-act="xcopy" data-name="${esc(x.name)}" title="Copy status to clipboard" aria-label="Copy the status of ${esc(x.name)} to the clipboard">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 3.5V2.9A1.4 1.4 0 0 0 9.1 1.5H3.9A1.4 1.4 0 0 0 2.5 2.9v7.2a1.4 1.4 0 0 0 1.4 1.4h.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>Copy</button>
             <pre class="json">${esc(JSON.stringify(x.status, null, 2))}</pre></div></details>` : ""}
+          ${xappLatency(x.name)}
           <div class="btns" style="margin-top:10px">
             ${x.source === "remote" ? (x.state === "running" ? `<button data-act="xstop" data-name="${esc(x.name)}">Disconnect</button>` : "")
               : x.state === "running" ? `<button data-act="xstop" data-name="${esc(x.name)}">Stop</button>`
@@ -613,6 +685,11 @@
       } else if (a === "xstart") {
         const r = await api(`xapps/${encodeURIComponent(b.dataset.name)}/start`, { method: "POST", body: "{}" });
         toast(r.state === "running" ? `${r.name} started` : `${r.name}: ${r.error}`, r.state !== "running");
+      } else if (a === "latreset") {
+        await api("latency/reset", { method: "POST" });
+        state.latency = await api("latency").catch(() => false);
+        toast("Latency statistics reset");
+        render();
       } else if (a === "xstop") {
         await api(`xapps/${encodeURIComponent(b.dataset.name)}/stop`, { method: "POST" });
         toast(`${b.dataset.name} stopped`);

@@ -193,3 +193,7 @@ class Indication:
     #: decoded content (KPMReport for KPM, dict for RC) when the SM is known
     decoded: Any = None
     received_at: float = field(default_factory=time.time)
+    #: latency trace ID (opaque int) linking controls to this indication, None when disabled
+    trace: Optional[int] = None
+    #: ``perf_counter_ns`` time at which the PDU was received (RIC process clock)
+    rx_ns: Optional[int] = None

@@ -42,10 +42,20 @@ Differences with the OSC framework:
 * control requests wait for the acknowledgement and return
   ``{"success", "cause", "outcome"}``;
 * KPM decoding is complete (all metrics of format 2, every UE id type).
+
+Latency instrumentation (additions, the OSC API is unchanged): the xApp measures
+``xapp_queue``, ``xapp_callback`` and ``xapp_control_call`` and reports them to
+the RIC. While a subscription callback runs, the trace ID of its indication is
+kept in a thread local: :meth:`xAppBase.send_control_request` (hence every
+``e2sm_rc`` helper) sends it with the control, so the RIC can measure the
+indication -> control loop. Outside the callback use :meth:`xAppBase.current_trace`
+with ``send_control_request(..., trace=...)`` or ``with self.use_trace(trace):``.
+:meth:`xAppBase.get_latency` returns the RIC side statistics of this xApp.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import functools
 import json
@@ -62,12 +72,14 @@ from ..codec import rc as R
 from ..codec.asn import aper_decode
 from ..codec.e2ap import plmn_to_bytes  # noqa: F401  (re-export convenience)
 from ..codec.e2sm import NTP_EPOCH_OFFSET, gnb_du_ueid, gnb_ueid, nr_cgi, ue_key
+from ..core.latency import now_ns
 from ..core.ric import RICError
 from .links import Link, RemoteLink
 
 log = logging.getLogger("uric.xapp")
 
 _embed = threading.local()
+_UNSET: Any = object()
 
 
 class e2sm_types(Enum):
@@ -116,7 +128,9 @@ class xAppBase:
         self._link: Link = link if link is not None else RemoteLink(
             ric_address or self.config.get("ric_address"), self.xapp_name,
             version=type(self).version, description=type(self).description)
-        self._link.on_indication = self._inbox.put
+        self._tls = threading.local()
+        self._timing = bool(getattr(self._link, "timing_enabled", False))
+        self._link.on_indication = self._on_link_indication
         self.e2sm_kpm = e2sm_kpm_module(self)
         self.e2sm_rc = e2sm_rc_module(self)
 
@@ -160,27 +174,72 @@ class xAppBase:
         except Exception:
             self.log.exception("xApp start function failed")
 
+    def _on_link_indication(self, ind: dict) -> None:
+        # called by the link (reader thread / RIC loop): timestamp for xapp_queue
+        self._inbox.put((now_ns() if self._timing else 0, ind))
+
     def _run(self) -> None:
+        tick = self._link.tick
         while self.running:
             try:
                 item = self._inbox.get(timeout=0.1)
             except queue.Empty:
+                tick()
                 continue
             self._dispatch(item)
+            tick()
 
-    def _dispatch(self, ind: dict) -> None:
+    def _dispatch(self, item) -> None:
+        t_q, ind = item if isinstance(item, tuple) else (0, item)
         sub = self.my_subscriptions.get(ind["sub"])
         if sub is None or sub.callback_func is None:
             return
+        trace = ind.get("trace")
+        node = ind["node"]
+        t0 = 0
+        if t_q and self._timing:
+            t0 = now_ns()
+            self._link.timing("xapp_queue", t0 - t_q, node, trace)
+        self._tls.trace = trace
         hdr, msg = ind["header"], ind["message"]
         try:
             if sub.e2sm_type == e2sm_types.E2SM_KPM:
                 hdr, msg = self.e2sm_kpm.unpack_ric_indication(hdr, msg)
             elif sub.e2sm_type == e2sm_types.E2SM_RC:
                 hdr, msg = self.e2sm_rc.unpack_ric_indication(hdr, msg)
-            sub.callback_func(ind["node"], ind["sub"], hdr, msg)
+            sub.callback_func(node, ind["sub"], hdr, msg)
         except Exception:
             self.log.exception("subscription callback failed")
+        finally:
+            self._tls.trace = None
+            if t0:
+                self._link.timing("xapp_callback", now_ns() - t0, node, trace)
+
+    # ------------------------------------------------------------------ latency
+
+    def current_trace(self) -> Optional[int]:
+        """Trace ID of the indication being handled by this thread (None outside a
+        subscription callback, or when the RIC does not provide trace IDs)."""
+        return getattr(self._tls, "trace", None)
+
+    @contextlib.contextmanager
+    def use_trace(self, trace: Optional[int]):
+        """Attribute the controls sent in the ``with`` block (including the
+        ``e2sm_rc`` helpers) to the indication with this trace ID."""
+        prev = getattr(self._tls, "trace", None)
+        self._tls.trace = trace
+        try:
+            yield
+        finally:
+            self._tls.trace = prev
+
+    def get_latency(self, e2_node_id: Optional[str] = None, stage: Optional[str] = None) -> dict:
+        """RIC side latency statistics of this xApp (milliseconds; ``{}`` when the
+        RIC does not support latency instrumentation)."""
+        try:
+            return self._link.latency(node=e2_node_id, stage=stage)
+        except RICError:
+            return {}
 
     def stop(self) -> None:
         """Delete every subscription and stop the xApp."""
@@ -193,8 +252,8 @@ class xAppBase:
         t = self.xapp_thread
         if t is not None and t is not threading.current_thread():
             t.join(timeout=5)
+        self._link.close()  # embedded: only flushes buffered latency samples
         if not self.embedded:
-            self._link.close()
             sys.exit(0)
 
     def signal_handler(self, sig, frame) -> None:
@@ -234,10 +293,20 @@ class xAppBase:
 
     def send_control_request(self, e2_node_id: str, ran_function_id: int, control_header: bytes,
                              control_msg: bytes, ack_request: int = 1,
-                             call_process_id: Optional[bytes] = None) -> dict:
-        """Raw RIC control request; returns ``{"success", "cause", "outcome"}``."""
-        return self._link.control(e2_node_id, ran_function_id, control_header, control_msg,
-                                  ack=bool(ack_request), call_process_id=call_process_id)
+                             call_process_id: Optional[bytes] = None, *, trace: Optional[int] = _UNSET) -> dict:
+        """Raw RIC control request; returns ``{"success", "cause", "outcome"}``.
+
+        ``trace``: trace ID of the indication that triggered this control
+        (default: :meth:`current_trace`; ``None`` marks it as untriggered)."""
+        if trace is _UNSET:
+            trace = getattr(self._tls, "trace", None)
+        t0 = now_ns() if self._timing else 0
+        try:
+            return self._link.control(e2_node_id, ran_function_id, control_header, control_msg,
+                                      ack=bool(ack_request), call_process_id=call_process_id, trace=trace)
+        finally:
+            if t0:
+                self._link.timing("xapp_control_call", now_ns() - t0, e2_node_id, trace)
 
     def get_e2_nodes(self) -> list[dict]:
         """Connected E2 nodes (with RAN functions and decoded capabilities)."""

@@ -35,6 +35,7 @@ from ..codec.asn import CodecError, to_jsonable
 from ..codec.e2ap import E2APMessage, cause, cause_str, global_node_key
 from . import events as ev
 from .events import EventBus
+from .latency import LatencyRecorder, now_ns
 from .model import UE, Action, E2Node, Indication, RANFunction, Subscription
 from .transport import Connection, E2Listener, sctp_available, E2_SCTP_PORT
 
@@ -93,6 +94,12 @@ class RICConfig:
     ue_timeout: float = 30.0
     #: seconds after which a disconnected E2 node is forgotten (0 = never)
     node_retention: float = 600.0
+    #: control-loop latency instrumentation (:mod:`uric.core.latency`)
+    latency_enabled: bool = True
+    #: optional JSONL file receiving every raw latency sample
+    latency_log_file: Optional[str] = None
+    #: seconds an indication trace ID stays valid for linking a control to it
+    latency_trace_ttl_s: float = 10.0
 
 
 class NearRTRIC:
@@ -113,6 +120,8 @@ class NearRTRIC:
         self._instances: dict[int, itertools.count] = {}
         self._tasks: list[asyncio.Task] = []
         self.stats = {"rx": 0, "tx": 0, "indications": 0, "controls": 0, "errors": 0}
+        self.latency = LatencyRecorder(self.config.latency_enabled, self.config.latency_log_file,
+                                       self.config.latency_trace_ttl_s)
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -151,6 +160,7 @@ class NearRTRIC:
         for n in list(self.nodes.values()):
             if n.conn:
                 n.conn.close()
+        self.latency.close()
 
     async def _housekeeping(self) -> None:
         while True:
@@ -187,22 +197,28 @@ class NearRTRIC:
                 "listeners": self.listeners,
                 "nodes": len(self.connected_nodes()), "ues": len(self.ues),
                 "subscriptions": len([s for s in self.subscriptions.values() if s.state == "active"]),
-                "stats": dict(self.stats)}
+                "stats": dict(self.stats),
+                # CPU seconds used by the RIC process (user + system), e.g. for overhead measurements
+                "cpu_s": time.process_time()}
 
     # ------------------------------------------------------------------
     # connection handling
     # ------------------------------------------------------------------
 
-    async def _send(self, node: E2Node | Connection, name: str, ies: dict) -> None:
+    async def _send(self, node: E2Node | Connection, name: str, ies: dict) -> int:
+        """Encode and send a PDU; returns the ``perf_counter_ns`` time at which it was
+        written to the transport (0 when latency instrumentation is disabled)."""
         conn = node.conn if isinstance(node, E2Node) else node
         if conn is None or conn.closed:
             raise RICError("connection closed")
         data = e2ap.encode(name, ies)
         await conn.send(data)
+        sent = now_ns() if self.latency.enabled else 0
         self.stats["tx"] += 1
         if isinstance(node, E2Node):
             node.stats["tx"] += 1
         log.debug("TX %s -> %s", name, conn.peer)
+        return sent
 
     async def _serve(self, conn: Connection) -> None:
         log.info("new E2 association from %s (%s)", conn.peer, conn.transport)
@@ -212,9 +228,13 @@ class NearRTRIC:
                 data = await conn.recv()
                 if data is None:
                     break
+                lat = self.latency
+                rx_ns = now_ns() if lat.enabled else None
                 self.stats["rx"] += 1
                 try:
                     msg = e2ap.decode(data)
+                    if rx_ns is not None:
+                        lat.record("e2ap_decode", now_ns() - rx_ns, None, node.id if node else None)
                 except CodecError as exc:
                     self.stats["errors"] += 1
                     log.warning("undecodable PDU from %s: %s", conn.peer, exc)
@@ -235,7 +255,7 @@ class NearRTRIC:
                 node.stats["rx"] += 1
                 node.last_seen = time.time()
                 try:
-                    await self._dispatch(node, msg)
+                    await self._dispatch(node, msg, rx_ns)
                 except Exception:
                     self.stats["errors"] += 1
                     node.stats["errors"] += 1
@@ -351,10 +371,10 @@ class NearRTRIC:
             return True
         return False
 
-    async def _dispatch(self, node: E2Node, msg: E2APMessage) -> None:
+    async def _dispatch(self, node: E2Node, msg: E2APMessage, rx_ns: Optional[int] = None) -> None:
         n = msg.name
         if n == "RICindication":
-            await self._on_indication(node, msg)
+            await self._on_indication(node, msg, rx_ns)
         elif n in ("RICsubscriptionResponse", "RICsubscriptionFailure"):
             r = msg["RICrequestID"]
             self._resolve((node.id, "sub", r["ricRequestorID"], r["ricInstanceID"]), msg)
@@ -414,11 +434,14 @@ class NearRTRIC:
         return next(cnt) % 65536
 
     async def _request(self, node: E2Node, key: tuple, name: str, ies: dict,
-                       timeout: Optional[float] = None) -> E2APMessage:
+                       timeout: Optional[float] = None,
+                       on_sent: Optional[Callable[[int], None]] = None) -> E2APMessage:
         fut = asyncio.get_running_loop().create_future()
         self._pending[key] = fut
         try:
-            await self._send(node, name, ies)
+            sent = await self._send(node, name, ies)
+            if on_sent is not None:
+                on_sent(sent)
             return await asyncio.wait_for(fut, timeout or self.config.procedure_timeout)
         except asyncio.TimeoutError:
             raise E2Timeout(f"{name} to {node.id}: no response") from None
@@ -512,7 +535,7 @@ class NearRTRIC:
     # indications
     # ------------------------------------------------------------------
 
-    async def _on_indication(self, node: E2Node, msg: E2APMessage) -> None:
+    async def _on_indication(self, node: E2Node, msg: E2APMessage, rx_ns: Optional[int] = None) -> None:
         r = msg["RICrequestID"]
         sub = self.subscriptions.get((node.id, r["ricRequestorID"], r["ricInstanceID"]))
         node.stats["indications"] += 1
@@ -526,6 +549,9 @@ class NearRTRIC:
                          action_id=msg["RICactionID"], sn=msg.get("RICindicationSN"),
                          type=msg["RICindicationType"], header=msg["RICindicationHeader"],
                          message=msg["RICindicationMessage"], call_process_id=msg.get("RICcallProcessID"))
+        lat = self.latency
+        timed = rx_ns is not None and lat.enabled
+        t0 = now_ns() if timed else 0
         try:
             if sub.service_model == "KPM":
                 ind.decoded = kpm.decode_indication(ind.header, ind.message)
@@ -535,6 +561,10 @@ class NearRTRIC:
                 self._update_from_rc(node, ind.decoded)
         except CodecError as exc:
             log.warning("cannot decode %s indication from %s: %s", sub.service_model, node.id, exc)
+        if timed:
+            lat.record("sm_decode", now_ns() - t0, sub.owner, node.id)
+            ind.rx_ns = rx_ns
+            ind.trace = lat.new_trace(rx_ns)
         self.events.emit(ev.INDICATION, {"node_id": node.id, "subscription": sub.id,
                                          "service_model": sub.service_model, "owner": sub.owner},
                          record=False)
@@ -600,8 +630,16 @@ class NearRTRIC:
 
     async def control(self, node_id: str, ran_function_id: int, header: bytes, message: bytes,
                       ack: bool = True, call_process_id: Optional[bytes] = None,
-                      owner: str = "ric", timeout: Optional[float] = None) -> ControlResult:
-        """Send a RIC Control Request and (optionally) wait for the acknowledgement."""
+                      owner: str = "ric", timeout: Optional[float] = None,
+                      trace: Optional[int] = None) -> ControlResult:
+        """Send a RIC Control Request and (optionally) wait for the acknowledgement.
+
+        ``trace`` is the trace ID of the indication that triggered this control
+        (:attr:`Indication.trace`); it links the control to that indication for
+        the ``loop`` latency stage.
+        """
+        lat = self.latency
+        t_enter = now_ns() if lat.enabled else 0
         node = self.get_node(node_id)
         f = node.ran_functions.get(ran_function_id)
         if f is None:
@@ -613,11 +651,23 @@ class NearRTRIC:
                "RICcontrolMessage": message, "RICcontrolAckRequest": "ack" if ack else "noAck"}
         self.stats["controls"] += 1
         if not ack:
-            await self._send(node, "RICcontrolRequest", ies)
+            sent = await self._send(node, "RICcontrolRequest", ies)
+            if t_enter and sent:
+                lat.control_sent(owner, node_id, trace, t_enter, sent)
             res = ControlResult(node_id, ran_function_id, True)
             self.events.emit(ev.CONTROL, {"owner": owner, **res.to_dict()})
             return res
-        resp = await self._request(node, (node_id, "ctrl", req, inst), "RICcontrolRequest", ies, timeout)
+        sent_at = [0]
+
+        def on_sent(ts: int) -> None:
+            sent_at[0] = ts
+            if t_enter and ts:
+                lat.control_sent(owner, node_id, trace, t_enter, ts)
+
+        resp = await self._request(node, (node_id, "ctrl", req, inst), "RICcontrolRequest", ies, timeout,
+                                   on_sent=on_sent)
+        if t_enter and sent_at[0]:
+            lat.record("e2_ack_rtt", now_ns() - sent_at[0], owner, node_id, trace)
         outcome = resp.get("RICcontrolOutcome")
         decoded = None
         if outcome and f.service_model == "RC":

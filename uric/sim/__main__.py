@@ -20,13 +20,19 @@ def main() -> None:
     p.add_argument("--plmn", default="00101")
     p.add_argument("--first-gnb-id", type=lambda s: int(s, 0), default=0xE00)
     p.add_argument("--churn", type=float, default=0.05, help="per second attach/detach probability")
+    p.add_argument("--seed", type=int, default=None,
+                   help="random seed (node i uses seed+i; default: the gNB ID, i.e. deterministic)")
+    p.add_argument("--min-period-ms", type=int, default=50,
+                   help="lower bound of the KPM reporting period (default 50 ms)")
     p.add_argument("--log-level", default="INFO")
     a = p.parse_args()
     logging.basicConfig(level=a.log_level.upper(), format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
     async def run():
         world = World()
-        nodes = [SimE2Node(a.first_gnb_id + i, a.plmn, a.cells, a.ues, world, a.churn) for i in range(a.nodes)]
+        nodes = [SimE2Node(a.first_gnb_id + i, a.plmn, a.cells, a.ues, world, a.churn,
+                           seed=None if a.seed is None else a.seed + i, min_period_ms=a.min_period_ms)
+                 for i in range(a.nodes)]
         await asyncio.gather(*(n.run(a.ric, a.port, a.transport) for n in nodes))
 
     try:

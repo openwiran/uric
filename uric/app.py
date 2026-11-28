@@ -77,6 +77,10 @@ def parse_args(argv=None):
     p.add_argument("--xapp", action="append", default=[], metavar="SPEC",
                    help="start an xApp: installed entry-point name, module[:Class] or path (repeatable)")
     p.add_argument("--list-xapps", action="store_true", help="list discoverable xApps and exit")
+    p.add_argument("--latency", action=argparse.BooleanOptionalAction, default=None,
+                   help="control-loop latency instrumentation (default: on)")
+    p.add_argument("--latency-log", default=None, metavar="FILE",
+                   help="append every raw latency sample to FILE (JSON lines)")
     p.add_argument("--log-level", default=None)
     p.add_argument("--version", action="version", version=f"uric {__version__}")
     return p.parse_args(argv)
@@ -88,6 +92,7 @@ def build(args) -> tuple[RICApp, str]:
         with open(args.config) as f:
             cfg = json.load(f)
     rc = cfg.get("ric", {})
+    lat = cfg.get("latency", {}) or {}
     transport = args.transport or rc.get("transport", "auto")
     transports = ("sctp", "tcp") if transport == "both" else (transport,)
     config = RICConfig(
@@ -100,6 +105,9 @@ def build(args) -> tuple[RICApp, str]:
         procedure_timeout=rc.get("procedure_timeout", 5.0),
         ue_timeout=rc.get("ue_timeout", 30.0),
         node_retention=rc.get("node_retention", 600.0),
+        latency_enabled=args.latency if args.latency is not None else bool(lat.get("enabled", True)),
+        latency_log_file=args.latency_log or lat.get("log_file") or None,
+        latency_trace_ttl_s=float(lat.get("trace_ttl_s", 10.0)),
     )
     http = cfg.get("http", {})
     xapps = list(cfg.get("xapps", []))

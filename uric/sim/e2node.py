@@ -110,8 +110,10 @@ class SimSubscription:
 class SimE2Node:
     def __init__(self, gnb_id: int, plmn: str = "00101", n_cells: int = 2, n_ues: int = 4,
                  world: Optional[World] = None, churn: float = 0.0, seed: Optional[int] = None,
-                 name: Optional[str] = None):
+                 name: Optional[str] = None, min_period_ms: int = 50):
         self.gnb_id = gnb_id
+        #: lower bound applied to the KPM reporting period requested by subscriptions
+        self.min_period_ms = min_period_ms
         self.plmn = plmn
         self.name = name or f"gnb-{gnb_id:x}"
         self.world = world or World()
@@ -448,7 +450,7 @@ class SimE2Node:
         return {"equal": cur == v, "greaterthan": cur > v, "lessthan": cur < v}.get(expr, True)
 
     async def _kpm_loop(self, sub: SimSubscription) -> None:
-        period = max(sub.period_ms, 50) / 1000
+        period = max(sub.period_ms, self.min_period_ms, 1) / 1000
         a = sub.adef
         while True:
             await asyncio.sleep(period)
